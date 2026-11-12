@@ -10,7 +10,7 @@ Build from the repository root:
 bash scripts/package-extension.sh
 ```
 
-Upload `agent-status-indicator@Ruochen0513.github.io.shell-extension.zip` at <https://extensions.gnome.org/upload/> after signing in. The archive is produced with `gnome-extensions pack` when available, with a ZIP fallback for other platforms. Its only files are `metadata.json`, `extension.js`, `state.js` and `LICENSE`. The build validates the archive before reporting success.
+Upload `agent-status-indicator@Ruochen0513.github.io.shell-extension.zip` at <https://extensions.gnome.org/upload/> after signing in. The archive is produced with `gnome-extensions pack` when available, with a ZIP fallback for other platforms. Its only files are `metadata.json`, `extension.js`, `state.js`, `alerts.js` and `LICENSE`. The build validates the archive before reporting success.
 
 Keep the UUID `agent-status-indicator@Ruochen0513.github.io` for all marketplace updates. The older local-install UUID is not the marketplace identity. The initial display version is `1.0.0`; the website assigns its own numeric submission version. Only GNOME Shell 46 is declared. Test additional Shell versions before adding them.
 
@@ -37,20 +37,20 @@ If screenshots are requested, capture the actual GNOME 46 top bar and expanded s
 
 The archive contains the GNOME presentation client only. It monitors `$XDG_CACHE_HOME/agent-status-indicator/state.json` (or `~/.cache/agent-status-indicator/state.json`). The separately installed Python companion writes this file atomically from agent lifecycle callbacks. Installing the companion and enabling hooks are deliberate user actions outside the extension; the extension does not install or run Python, a shell command or a custom subprocess.
 
-The extension reads the file asynchronously once per second with one read in flight. `disable()` cancels pending reads, removes the timer and destroys the panel button. Callbacks from a previous enable cycle cannot update new actors. Missing data gives a visible setup message, and malformed data gives an error with recovery on the next read. The only external action is opening the public setup URL with the desktop's default URI handler when the user selects it.
+The extension watches the parent directory, filters atomic file replacements, and debounces events before bounded asynchronous reads. It does not periodically poll state. `disable()` cancels pending reads, releases monitors, notifications and one-shot sources, and destroys the panel button. Callbacks from a previous enable cycle cannot update new actors. Missing data gives a setup message; malformed data retains valid sessions with a diagnostic. User actions can open setup instructions or copy a session reset command; the extension never executes that command.
 
-The status priority is error, approval, working, idle. Active states do not expire based on elapsed time. The extension reads status summaries, not conversation transcripts. It has no clipboard, telemetry, network, lock-screen mode, administrator or password access. The source is readable ES-module JavaScript. The MIT license is included; the companion and its installers are not in the archive.
+The compatible status priority remains error, approval, working, idle. GNOME derives decision and finished-response details from source provenance. Active states do not expire based on elapsed time. Native notifications and sounds consume bounded meaningful transitions; startup does not replay alerts. Preferences live under XDG config. Clipboard writes occur only when the user chooses to copy a reset command; there are no clipboard reads, telemetry, network calls, lock-screen mode, administrator or password access. The source is readable ES-module JavaScript. The MIT license is included; the companion and its installers are not in the archive. See [GNOME usage](gnome-usage.md) for retention and degraded-mode behavior.
 
 ## Validation and remaining release actions
 
-On 2026-10-21, all 32 Python tests, the asynchronous JavaScript harness, module syntax checks and shell syntax checks passed. The archive was built with GNOME's pack command and passed content validation. The exact packaged UI has not yet received a final manual smoke test in a fresh GNOME 46 session.
+The original package passed automated checks on 2026-10-21. The extended implementation adds lifecycle, native GIO, session-menu and alert tests. The exact packaged UI still requires a manual smoke test in a fresh GNOME 46 session; GNOME 50 remains undeclared until tested.
 
 Run:
 
 ```bash
 node --experimental-vm-modules tests/test_extension.mjs
 python3 -m unittest discover -s tests -v
-bash -n install.sh scripts/*.sh uninstall.sh
+for script in install.sh scripts/*.sh uninstall.sh; do bash -n "$script" || exit; done
 bash scripts/package-extension.sh
 ```
 
@@ -58,10 +58,10 @@ The JavaScript harness tests state priority, long tasks, asynchronous reads, rea
 
 Before submitting:
 
-1. A human maintainer must read and understand the JavaScript, be able to explain it to reviewers, and undertake ongoing maintenance. Development used AI assistance; do not represent the work as entirely handwritten or hide that fact if asked.
+1. A human maintainer must read and understand the JavaScript, be able to explain it to reviewers, and undertake ongoing maintenance.
 2. Test this exact package in a GNOME 46 session: missing companion, working/approval/idle/error, recovery from malformed JSON, and disable/enable (including locking/unlocking). Keep the result and environment in the release notes.
 3. Publish the corresponding source revision so reviewers can inspect the same code.
-4. Sign in, select the ZIP, read the current upload agreement, and approve its terms personally before final submission. If this chat assists with submission, confirmation of any legal agreement must happen at that step.
+4. Sign in, select the ZIP, read the current upload agreement, and approve its terms personally before final submission.
 5. Save the actual review URL and respond to reviewer feedback. A successful upload is a request for review, not immediate public availability.
 
 References checked on 2026-10-21: [review rules](https://gjs.guide/extensions/review-guidelines/review-guidelines.html), [maintainership guidance](https://gjs.guide/extensions/review-guidelines/best-practices.html), [metadata and packaging](https://gjs.guide/extensions/overview/anatomy.html).

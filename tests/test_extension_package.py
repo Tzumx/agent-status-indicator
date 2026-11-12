@@ -22,6 +22,7 @@ class PackageTests(unittest.TestCase):
             archive.writestr('metadata.json', json.dumps(metadata))
             archive.writestr('extension.js', source if source is not None else (EXTENSION / 'extension.js').read_text())
             archive.write(EXTENSION / 'state.js', 'state.js')
+            archive.write(EXTENSION / 'alerts.js', 'alerts.js')
             archive.write(ROOT / 'LICENSE', 'LICENSE')
             if extra:
                 archive.writestr(extra, 'unwanted payload')

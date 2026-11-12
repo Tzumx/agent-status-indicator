@@ -10,7 +10,7 @@ from zipfile import ZipFile
 def validate(path):
     with ZipFile(path) as archive:
         names = archive.namelist()
-        expected = {'metadata.json', 'extension.js', 'state.js', 'LICENSE'}
+        expected = {'metadata.json', 'extension.js', 'state.js', 'alerts.js', 'LICENSE'}
         if len(names) != len(set(names)) or set(names) != expected:
             raise ValueError(f'Unexpected archive contents: {names}')
         for name in names:
@@ -30,7 +30,7 @@ def validate(path):
             raise ValueError('EGO assigns the numeric submission version')
         if not re.fullmatch(r'(?=.*[a-zA-Z0-9])[a-zA-Z0-9 .]{1,16}', metadata.get('version-name', '')):
             raise ValueError('Invalid version-name')
-        extension = archive.read('extension.js').decode()
+        extension = '\n'.join(archive.read(name).decode() for name in names if name.endswith('.js'))
         for pattern in ('Gio.Subprocess', 'spawn_command_line', 'load_contents(null)', 'GLib.file_get_contents'):
             if pattern in extension:
                 raise ValueError(f'Unexpected subprocess or blocking read: {pattern}')
