@@ -36,7 +36,7 @@ Revision `b9880ee` was installed with `--gnome-only` on Ubuntu 24.04.5 / GNOME 4
 
 The opt-in hook merge preserved the existing Claude Code settings and hook group, verified against the installer backup. Codex 0.167.2 registered all eight supplied events with no configuration errors, but every hook remained untrusted (`needs_trust`). Claude Code 2.1.322 was present. Real agent hook firing remains unverified; review Codex hooks in `/hooks` and restart agent sessions before testing.
 
-The original archive at setup had SHA-256 `90633d28b68402993739b8c1841c3f9768c310f2f6361e657243493984bab75a`. This setup used source installation; the corrected candidate archive was subsequently checked as described below. No GNOME 50 VM tooling was installed, so that target remains untested.
+The original archive at setup had SHA-256 `90633d28b68402993739b8c1841c3f9768c310f2f6361e657243493984bab75a`. This setup used source installation; the corrected candidate archive was subsequently checked as described below. GNOME 50 was untested at setup; subsequent VM coverage is recorded below.
 
 ### Offscreen GNOME 46 smoke check (2026-11-12)
 
@@ -60,13 +60,29 @@ Single helper-invocation-to-notification-object observations were completion 305
 
 Separate namespace checks ran the real installer and uninstaller against read-only source copies and synthetic settings. All ten checks passed: GNOME-only installation, legacy and canonical UUIDs, XDG overrides, repeated hook upgrades with backups and preservation, CLI cache placement, both uninstall modes, repeated uninstall, and preservation of unrelated hooks/services. This found and fixed cleanup aborting when the user service manager was unavailable. The complete regression suite then passed 50 Python tests, native GIO, the JavaScript harness, six-entry-point compilation, shell syntax and archive validation.
 
-These results cover a real offscreen Shell with synthetic lifecycle events. Physical input, audible sound/volume, lock and suspend/resume, actual agent hook firing/trust, a normal desktop's resource/latency measurements, and GNOME 50 remain unvalidated. The corrected candidate has not been installed or loaded into the main desktop session.
+These results cover a real offscreen Shell with synthetic lifecycle events. Physical input, audible sound/volume, lock and suspend/resume, actual agent hook firing/trust, and a normal desktop's resource/latency measurements remain unvalidated. Subsequent GNOME 50 coverage is recorded below. The corrected candidate has not been installed or loaded into the main desktop session.
 
 ### GNOME 46 archive installation check (2026-11-12)
 
 At revision `802e7b8`, the same candidate archive was installed into a temporary home with `gnome-extensions install`, then upgraded with `--force`, before starting a fresh isolated GNOME 46 Shell. All five installed files matched the archive by SHA-256. The 73 native smoke assertions passed again, followed by three checks of GNOME's native extension-removal API: removal succeeded, the installed directory disappeared, and an unrelated extension remained. This gives 76 passing assertions. Removal was exercised while the disposable Shell was running; the standalone uninstall confirmation application was not tested.
 
 The archive digest remained `108dcbd2af07211f56cb0f106545b296881d4f8c19e67c747580746654c58d78`. Neither the corrected source nor archive was installed into the main desktop session.
+
+### GNOME 50 VM and final release archive (2026-11-12)
+
+The final candidate adds GNOME 50 to the declared versions without changing the runtime JavaScript from `802e7b8`. Its archive SHA-256 is `6694e30a1f4d2d2738b08c16f1355cb747c6a254a9bc82723fa795b994082b28`. This exact ZIP passed fresh CLI installation, forced upgrade, the same 76 native assertions and GNOME-native removal on both GNOME 46 and 50. All five installed file hashes matched the final archive on both versions.
+
+The GNOME 50 test used a KVM guest prepared from an [official signed Ubuntu 26.04 cloud image](https://cloud-images.ubuntu.com/releases/resolute/release/). The environment was GNOME Shell 50.1-0ubuntu1.5, Mutter 50.1-0ubuntu2.5, GJS 1.88.0, Python 3.14.4 and Linux 7.0.0-38-generic. Private QEMU 8.2.2 binaries ran with two virtual CPUs, 2 GiB guest RAM, software rendering with two threads, and a 1024×768 offscreen Wayland monitor.
+
+Only guest provisioning fetched packages. Compatibility runs had no network device or external route, shared host home, desktop sockets, or audio/graphics devices. Every accepted run began with fresh guest test directories and a unique identifier; result identity and installed hashes were checked before accepting the report. The VM shut down after collecting results.
+
+Native checks covered ten independent sessions, same-project rows, all four notification categories, deduplication, keyboard scrolling, bounded paging, malformed state/preferences, atomic replacement, directory recreation and four disable/enable cycles. ASCII and CJK project labels stayed within the monitor at theme scales 1 and 2, preserving their session ID/status suffixes; menu widths were 1,012 and 1,000 pixels respectively. Native screenshots were inspected with CJK fonts installed. The extension manager reported no errors.
+
+All 50 Python tests, including native GIO and isolated installation regressions, passed under the guest's Python 3.14.4. Six entry points compiled, shell syntax checks passed, and the final archive validator accepted the package. Tkinter and CJK fonts were optional test-image additions; the GNOME-only installation path still requires neither a desktop client nor Tkinter. The host's 50 Python tests, JavaScript harness, compilation, syntax and package checks also passed.
+
+Single helper-invocation-to-notification-object observations in the VM were completion 421.7 ms, permission 295.0 ms, decision 253.4 ms and error 270.3 ms. These include hook startup, debounce and observation intervals; they are not banner latency distributions or hardware performance guarantees.
+
+The main Shell process/start time, enabled-extension list and hook-file hashes were unchanged. No final-candidate installation or activation occurred in the main desktop session. Physical input/audio, volume, lock/suspend/resume, actual agent hook firing/trust, and normal desktop resource/wakeup/banner-latency measurements remain release checks.
 
 ## Hook measurements
 

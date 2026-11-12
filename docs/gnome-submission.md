@@ -12,7 +12,7 @@ bash scripts/package-extension.sh
 
 Upload `agent-status-indicator@Ruochen0513.github.io.shell-extension.zip` at <https://extensions.gnome.org/upload/> after signing in. The archive is produced with `gnome-extensions pack` when available, with a ZIP fallback for other platforms. Its only files are `metadata.json`, `extension.js`, `state.js`, `alerts.js` and `LICENSE`. The build validates the archive before reporting success.
 
-Keep the UUID `agent-status-indicator@Ruochen0513.github.io` for all marketplace updates. The older local-install UUID is not the marketplace identity. The initial display version is `1.0.0`; the website assigns its own numeric submission version. Only GNOME Shell 46 is declared. Test additional Shell versions before adding them.
+Keep the UUID `agent-status-indicator@Ruochen0513.github.io` for all marketplace updates. The older local-install UUID is not the marketplace identity. The initial display version is `1.0.0`; the website assigns its own numeric submission version. GNOME Shell 46 and 50 are declared after offscreen native checks, including an Ubuntu 26.04 KVM test. Test additional Shell versions before adding them.
 
 ## Listing text
 
@@ -43,7 +43,7 @@ The compatible status priority remains error, approval, working, idle. GNOME der
 
 ## Validation and remaining release actions
 
-The original package passed automated checks on 2026-10-21. The extended implementation adds lifecycle, native GIO, session-menu and alert tests. See [validation and measurements](validation.md) for reproducible checks and measured hook costs. The exact packaged UI still requires a manual smoke test in a fresh GNOME 46 session; GNOME 50 remains undeclared until tested.
+The original package passed automated checks on 2026-10-21. The extended implementation adds lifecycle, native GIO, session-menu and alert tests. See [validation and measurements](validation.md) for reproducible checks and measured hook costs. The exact packaged UI has offscreen native coverage for GNOME 46 and 50. Physical desktop input, audio, lock/suspend/resume and real agent integration still require validation as recorded there.
 
 Run:
 
@@ -54,12 +54,12 @@ for script in install.sh scripts/*.sh uninstall.sh; do bash -n "$script" || exit
 bash scripts/package-extension.sh
 ```
 
-The JavaScript harness tests state priority, long tasks, asynchronous reads, read errors, cancellation, missing-file guidance, and callbacks crossing disable/enable cycles. Python tests cover the companion, installation and archive validation. These checks do not replace a final manual GNOME 46 smoke test of the exact packaged version.
+The JavaScript harness tests state priority, long tasks, asynchronous reads, read errors, cancellation, missing-file guidance, and callbacks crossing disable/enable cycles. Python tests cover the companion, installation and archive validation. The remaining physical desktop checks for GNOME 46 and 50 are recorded in the validation document.
 
 Before submitting:
 
 1. A human maintainer must read and understand the JavaScript, be able to explain it to reviewers, and undertake ongoing maintenance.
-2. Test this exact package in a GNOME 46 session: missing companion, working/approval/idle/error, recovery from malformed JSON, and disable/enable (including locking/unlocking). Keep the result and environment in the release notes.
+2. Complete the remaining GNOME 46 and 50 desktop checks in [validation and measurements](validation.md), including physical input, audio, locking and suspend/resume. Keep the result and environment in the release notes.
 3. Publish the corresponding source revision so reviewers can inspect the same code.
 4. Sign in, select the ZIP, read the current upload agreement, and approve its terms personally before final submission.
 5. Save the actual review URL and respond to reviewer feedback. A successful upload is a request for review, not immediate public availability.

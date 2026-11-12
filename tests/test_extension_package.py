@@ -40,7 +40,7 @@ class PackageTests(unittest.TestCase):
 
     def test_legacy_uuid_unverified_versions_and_numeric_version_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
-            for metadata in ({'uuid': 'agent-status-indicator@yuhaozhang.github.io'}, {'shell-version': ['46', '50']}, {'version': 1}):
+            for metadata in ({'uuid': 'agent-status-indicator@yuhaozhang.github.io'}, {'shell-version': ['46', '50', '51']}, {'shell-version': ['46', '49', '50']}, {'version': 1}):
                 with self.subTest(metadata=metadata), self.assertRaises(ValueError):
                     validator.validate(self.make_archive(directory, metadata_update=metadata))
 

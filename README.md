@@ -7,7 +7,7 @@ It is designed for people who run several coding-agent sessions at the same time
 ## Features
 
 - Floating desktop indicator for Linux, macOS, and Windows.
-- Native GNOME Shell extension for GNOME 46 and compatible GNOME desktops.
+- Native GNOME Shell extension for GNOME 46 and 50.
 - Event-driven GNOME session menu with completion, permission, decision, and error alerts.
 - Per-session state tracking for concurrent Codex and Claude Code sessions.
 - Status priority aggregation: `error > approval > working > idle`.

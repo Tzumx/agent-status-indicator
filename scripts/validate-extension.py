@@ -24,8 +24,8 @@ def validate(path):
                 raise ValueError(f'Missing metadata field: {field}')
         if not metadata['url'].startswith('https://github.com/Ruochen0513/agent-status-indicator'):
             raise ValueError('Unexpected project URL')
-        if metadata.get('shell-version') != ['46']:
-            raise ValueError('Only GNOME Shell 46 is declared for the initial submission')
+        if metadata.get('shell-version') != ['46', '50']:
+            raise ValueError('Only the tested GNOME Shell versions 46 and 50 may be declared')
         if 'version' in metadata:
             raise ValueError('EGO assigns the numeric submission version')
         if not re.fullmatch(r'(?=.*[a-zA-Z0-9])[a-zA-Z0-9 .]{1,16}', metadata.get('version-name', '')):
@@ -36,7 +36,7 @@ def validate(path):
                 raise ValueError(f'Unexpected subprocess or blocking read: {pattern}')
         if 'MIT License' not in archive.read('LICENSE').decode():
             raise ValueError('Missing MIT license text')
-    print('Extension archive validated: GNOME 46, JavaScript and license only.')
+    print('Extension archive validated: GNOME 46 and 50, JavaScript and license only.')
 
 
 if __name__ == '__main__':

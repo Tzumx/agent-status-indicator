@@ -100,4 +100,4 @@ Update all companion writers together. Older versions may discard optional metad
 
 ## Compatibility and validation
 
-Release metadata declares GNOME 46 only. Native GIO and JavaScript harness tests are supplemented by real offscreen GNOME 46 smoke checks. Interactive desktop, audio and suspend/resume checks, resource measurements, actual agent hook firing/trust and GNOME 50 VM tests remain required before release claims. See [validation and measurements](validation.md).
+Release metadata declares GNOME 46 and 50. Native GIO and JavaScript harness tests are supplemented by offscreen GNOME 46 checks and an Ubuntu 26.04 / GNOME 50 KVM smoke test. Physical desktop input, audio, lock/suspend/resume, actual agent hook firing/trust, and desktop resource/wakeup measurements remain release checks. See [validation and measurements](validation.md).
