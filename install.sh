@@ -5,12 +5,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MERGE_CODEX_HOOKS=0
 MERGE_CLAUDE_HOOKS=0
 START_SERVICES=1
+GNOME_ONLY=0
 
 usage() {
   cat <<'EOF'
 Usage: ./install.sh [options]
 
 Options:
+  --gnome-only           Install the GNOME extension and hook/CLI dependencies without desktop clients or services.
   --merge-codex-hooks    Merge config/codex/hooks.json into ~/.codex/hooks.json.
   --merge-claude-hooks   Merge config/claude/settings.example.json into ~/.claude/settings.json.
   --merge-hooks          Merge both Codex and Claude hook configs.
@@ -24,6 +26,9 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --gnome-only)
+      GNOME_ONLY=1
+      ;;
     --merge-codex-hooks)
       MERGE_CODEX_HOOKS=1
       ;;
@@ -63,23 +68,26 @@ fi
 EXTENSION_DIR="$EXTENSION_ROOT/$EXTENSION_UUID"
 
 DESKTOP_RUNTIME_DIR="$INSTALL_DATA_HOME/agent-status-indicator/desktop"
-mkdir -p "$HOME/.local/bin" "$INSTALL_DATA_HOME/agent-status-indicator/icons" "$DESKTOP_RUNTIME_DIR" "$INSTALL_CONFIG_HOME/systemd/user"
+mkdir -p "$HOME/.local/bin"
 mkdir -p "$EXTENSION_DIR"
 install -m 0644 "$ROOT/bin/agent_status_state.py" "$HOME/.local/bin/agent_status_state.py"
-install -m 0644 "$ROOT/bin/agent_status_state.py" "$DESKTOP_RUNTIME_DIR/agent_status_state.py"
 install -m 0755 "$ROOT/bin/agent-status" "$HOME/.local/bin/agent-status"
-install -m 0755 "$ROOT/bin/agent-status-indicator" "$HOME/.local/bin/agent-status-indicator"
 install -m 0755 "$ROOT/bin/agent-status-hook" "$HOME/.local/bin/agent-status-hook"
-install -m 0755 "$ROOT/bin/codex-status-exec" "$HOME/.local/bin/codex-status-exec"
-install -m 0755 "$ROOT/bin/agent-status-desktop" "$HOME/.local/bin/agent-status-desktop"
-cp "$ROOT/desktop/agent_status_desktop.py" "$DESKTOP_RUNTIME_DIR/agent_status_desktop.py"
-chmod 0644 "$DESKTOP_RUNTIME_DIR/agent_status_desktop.py"
-if [[ ! -s "$DESKTOP_RUNTIME_DIR/agent_status_desktop.py" ]]; then
-  echo "Desktop runtime was not installed: $DESKTOP_RUNTIME_DIR/agent_status_desktop.py" >&2
-  exit 1
+if [[ "$GNOME_ONLY" -eq 0 ]]; then
+  mkdir -p "$INSTALL_DATA_HOME/agent-status-indicator/icons" "$DESKTOP_RUNTIME_DIR" "$INSTALL_CONFIG_HOME/systemd/user"
+  install -m 0644 "$ROOT/bin/agent_status_state.py" "$DESKTOP_RUNTIME_DIR/agent_status_state.py"
+  install -m 0755 "$ROOT/bin/agent-status-indicator" "$HOME/.local/bin/agent-status-indicator"
+  install -m 0755 "$ROOT/bin/codex-status-exec" "$HOME/.local/bin/codex-status-exec"
+  install -m 0755 "$ROOT/bin/agent-status-desktop" "$HOME/.local/bin/agent-status-desktop"
+  cp "$ROOT/desktop/agent_status_desktop.py" "$DESKTOP_RUNTIME_DIR/agent_status_desktop.py"
+  chmod 0644 "$DESKTOP_RUNTIME_DIR/agent_status_desktop.py"
+  if [[ ! -s "$DESKTOP_RUNTIME_DIR/agent_status_desktop.py" ]]; then
+    echo "Desktop runtime was not installed: $DESKTOP_RUNTIME_DIR/agent_status_desktop.py" >&2
+    exit 1
+  fi
+  install -m 0644 "$ROOT/icons"/agent-status-*.png "$INSTALL_DATA_HOME/agent-status-indicator/icons/"
 fi
-install -m 0644 "$ROOT/icons"/agent-status-*.png "$INSTALL_DATA_HOME/agent-status-indicator/icons/"
-if command -v systemctl >/dev/null 2>&1 && [[ "$(uname -s)" == "Linux" ]]; then
+if [[ "$GNOME_ONLY" -eq 0 ]] && command -v systemctl >/dev/null 2>&1 && [[ "$(uname -s)" == "Linux" ]]; then
   install -m 0644 "$ROOT/config/systemd/agent-status.service" "$INSTALL_CONFIG_HOME/systemd/user/agent-status.service"
   install -m 0644 "$ROOT/config/systemd/agent-status-indicator.service" "$INSTALL_CONFIG_HOME/systemd/user/agent-status-indicator.service"
 fi
@@ -100,7 +108,7 @@ path.write_text(json.dumps(metadata, indent=2) + "\n")
 PYMETA
 
 if [[ "$START_SERVICES" -eq 1 ]]; then
-  if command -v systemctl >/dev/null 2>&1 && [[ "$(uname -s)" == "Linux" ]]; then
+  if [[ "$GNOME_ONLY" -eq 0 ]] && command -v systemctl >/dev/null 2>&1 && [[ "$(uname -s)" == "Linux" ]]; then
     systemctl --user daemon-reload
     systemctl --user enable --now agent-status.service
     systemctl --user restart agent-status.service
@@ -111,7 +119,9 @@ if [[ "$START_SERVICES" -eq 1 ]]; then
         gnome-extensions disable "$LEGACY_EXTENSION_UUID" || true
       fi
       # Do not remove the user's fallback until native extension enable succeeds.
-      systemctl --user disable --now agent-status-indicator.service 2>/dev/null || true
+      if [[ "$GNOME_ONLY" -eq 0 ]]; then
+        systemctl --user disable --now agent-status-indicator.service 2>/dev/null || true
+      fi
       echo "GNOME extension enabled. Existing loaded code needs logout/login to update."
     else
       echo "GNOME extension could not be enabled. Log out/in, then run:" >&2

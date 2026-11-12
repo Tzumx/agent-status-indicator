@@ -1,5 +1,23 @@
 # GNOME usage
 
+## Installation
+
+For the native top-bar indicator without desktop clients, Tkinter, or new systemd services:
+
+```bash
+./install.sh --gnome-only
+```
+
+Hooks remain opt-in. To merge them, preserving unrelated settings and creating backups:
+
+```bash
+./install.sh --gnome-only --merge-hooks
+```
+
+Use `--no-start` to copy files without changing extension activation. Restart agent sessions after hook changes; review and trust Codex hooks in `/hooks`, then run `agent-status doctor --check-codex`. A successful installation or synthetic hook test does not establish that a real agent invokes the hooks.
+
+The default installer still provides the upstream desktop clients and service. GNOME-only mode leaves previously installed services and desktop clients unchanged. Existing services can be disabled separately by the user; the native indicator and hooks do not require them. Never run a second tray client merely to support the extension.
+
 ## Sessions and states
 
 Open the indicator, expand **Sessions**, then Claude Code or Codex. Each session has its own project basename, stable abbreviated identifier, state, and last-event time. Missing project metadata displays **Session**. Sessions in the same project remain separate. The summary counts permission requests, decisions, errors, working, finished, and idle sessions.

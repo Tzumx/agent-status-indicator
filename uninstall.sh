@@ -57,7 +57,7 @@ rm -rf "$INSTALL_DATA_HOME/agent-status-indicator"
 rm -f "$INSTALL_CONFIG_HOME/autostart/agent-status-indicator.desktop"
 
 if [[ "$KEEP_CONFIG" -eq 0 ]]; then
-  rm -rf "$HOME/.cache/agent-status-indicator"
+  rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/agent-status-indicator"
   runtime_dir="${XDG_RUNTIME_DIR:-/tmp}/agent-status-indicator"
   if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
     runtime_dir="/tmp/agent-status-indicator-$(id -u)"

@@ -11,6 +11,35 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class InstallTests(unittest.TestCase):
+    def test_gnome_only_does_not_install_or_activate_services_or_desktop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            fake_bin = home / 'fake-bin'
+            fake_bin.mkdir()
+            log = home / 'commands'
+            for command in ('systemctl', 'gnome-extensions'):
+                executable = fake_bin / command
+                executable.write_text('#!/bin/sh\n' + f'echo {command} "$@" >> "{log}"\n')
+                executable.chmod(0o755)
+            env = {**os.environ, 'HOME': str(home), 'PATH': str(fake_bin) + os.pathsep + os.environ['PATH'],
+                   'XDG_DATA_HOME': str(home / 'data'), 'XDG_CONFIG_HOME': str(home / 'config'),
+                   'XDG_CACHE_HOME': str(home / 'cache')}
+            result = subprocess.run(['bash', str(ROOT / 'install.sh'), '--gnome-only'], env=env,
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn('systemctl', log.read_text())
+            self.assertIn('gnome-extensions enable', log.read_text())
+            for path in ('config/systemd', 'data/agent-status-indicator', '.local/bin/agent-status-desktop', '.codex', '.claude'):
+                self.assertFalse((home / path).exists(), path)
+            for name in ('agent-status', 'agent-status-hook', 'agent_status_state.py'):
+                self.assertTrue((home / '.local/bin' / name).exists())
+            extension = home / 'data/gnome-shell/extensions/agent-status-indicator@Ruochen0513.github.io'
+            self.assertTrue((extension / 'alerts.js').exists())
+            result = subprocess.run([str(home / '.local/bin/agent-status-hook'), '--agent', 'claude', '--event', 'Stop'],
+                                    input=json.dumps({'session_id': 's'}), env=env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((home / 'cache/agent-status-indicator/state.json').exists())
+
     def test_upgrade_preserves_unrelated_hooks_and_existing_extension_identity(self):
         with tempfile.TemporaryDirectory(prefix='status install ') as directory:
             home = Path(directory)

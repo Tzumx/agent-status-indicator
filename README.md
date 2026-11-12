@@ -60,6 +60,8 @@ agent-status-desktop
 
 The Linux installer starts the user-level `agent-status` daemon. To use the GNOME top-bar extension, log out and back in if GNOME does not load it immediately.
 
+For the native GNOME extension without desktop clients, Tkinter, or new services, use `./install.sh --gnome-only`. Add `--merge-hooks` to opt into automatic updates. Existing services remain unchanged. See [GNOME usage](docs/gnome-usage.md) for the session menu, reset guidance, notifications, sounds, and mute preferences.
+
 ### macOS
 
 From the repository directory:
