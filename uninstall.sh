@@ -41,7 +41,7 @@ gnome-extensions disable agent-status-indicator@Ruochen0513.github.io 2>/dev/nul
 gnome-extensions disable agent-status-indicator@yuhaozhang.github.io 2>/dev/null || true
 systemctl --user disable --now agent-status.service 2>/dev/null || true
 systemctl --user disable --now agent-status-indicator.service 2>/dev/null || true
-systemctl --user daemon-reload
+systemctl --user daemon-reload 2>/dev/null || true
 
 rm -f "$HOME/.local/bin/agent_status_state.py"
 rm -f "$HOME/.local/bin/agent-status"

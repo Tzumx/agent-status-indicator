@@ -40,6 +40,45 @@ class InstallTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue((home / 'cache/agent-status-indicator/state.json').exists())
 
+    def test_uninstall_without_user_manager_preserves_hooks_and_respects_xdg(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            fake_bin = home / 'fake-bin'
+            fake_bin.mkdir()
+            for command in ('systemctl', 'gnome-extensions'):
+                executable = fake_bin / command
+                executable.write_text('#!/bin/sh\nexit 1\n')
+                executable.chmod(0o755)
+            env = {**os.environ, 'HOME': str(home), 'PATH': str(fake_bin) + os.pathsep + os.environ['PATH'],
+                   'XDG_DATA_HOME': str(home / 'data'), 'XDG_CONFIG_HOME': str(home / 'config'),
+                   'XDG_CACHE_HOME': str(home / 'cache'), 'XDG_RUNTIME_DIR': str(home / 'runtime'),
+                   'CODEX_HOME': str(home / 'codex'), 'PYTHON_BIN': sys.executable}
+            result = subprocess.run(['bash', str(ROOT / 'install.sh'), '--gnome-only', '--no-start'],
+                                    env=env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            hooks = home / 'codex/hooks.json'
+            hooks.parent.mkdir()
+            hooks.write_text('{"unrelated": true}')
+            cache = home / 'cache/agent-status-indicator'
+            cache.mkdir(parents=True)
+            (cache / 'state.json').write_text('{}')
+            default_cache = home / '.cache/agent-status-indicator'
+            default_cache.mkdir(parents=True)
+            (default_cache / 'unrelated').write_text('keep')
+            unrelated_service = home / 'config/systemd/user/unrelated.service'
+            unrelated_service.parent.mkdir(parents=True)
+            unrelated_service.write_text('keep')
+            for keep_config in (True, False):
+                result = subprocess.run(['bash', str(ROOT / 'uninstall.sh')] + (['--keep-config'] if keep_config else []),
+                                        env=env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse((home / '.local/bin/agent-status').exists())
+                self.assertFalse((home / 'data/gnome-shell/extensions/agent-status-indicator@Ruochen0513.github.io').exists())
+                self.assertEqual(cache.exists(), keep_config)
+                self.assertEqual(json.loads(hooks.read_text()), {'unrelated': True})
+                self.assertEqual((default_cache / 'unrelated').read_text(), 'keep')
+                self.assertEqual(unrelated_service.read_text(), 'keep')
+
     def test_upgrade_preserves_unrelated_hooks_and_existing_extension_identity(self):
         with tempfile.TemporaryDirectory(prefix='status install ') as directory:
             home = Path(directory)

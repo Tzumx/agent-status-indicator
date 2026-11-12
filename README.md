@@ -221,7 +221,7 @@ Linux:
 ./uninstall.sh
 ```
 
-The uninstaller removes installed scripts, icons, the GNOME extension, and Linux user services. It does not remove Codex or Claude hook entries because those files may contain unrelated user configuration.
+The uninstaller removes installed scripts, icons, the GNOME extension, and Linux user services. It does not remove Codex or Claude hook entries because those files may contain unrelated user configuration. File cleanup also works when the user service manager is unavailable.
 
 For macOS and Windows, remove the installed application directory and command entries described in the platform sections. Remove the corresponding hook entries manually if hooks were enabled.
 
