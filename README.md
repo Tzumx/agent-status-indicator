@@ -318,7 +318,7 @@ Run the test suite and static checks:
 python3 -m unittest discover -s tests -v
 python3 -m py_compile bin/agent-status bin/agent_status_state.py bin/agent-status-hook bin/codex-status-exec bin/agent-status-desktop desktop/agent_status_desktop.py
 node --experimental-vm-modules tests/test_extension.mjs
-bash -n install.sh scripts/*.sh uninstall.sh
+for script in install.sh scripts/*.sh uninstall.sh; do bash -n "$script" || exit; done
 ```
 
 Prepare the GNOME Extensions submission archive (requires Python 3 and either `gnome-extensions` or `zip`):
@@ -328,6 +328,8 @@ Prepare the GNOME Extensions submission archive (requires Python 3 and either `g
 ```
 
 The archive contains only the GNOME JavaScript client and MIT license. The companion and hooks require separate installation; the extension shows setup guidance until it receives state. See [GNOME submission notes](docs/gnome-submission.md) for listing text, reviewer notes, verification and the remaining human submission steps.
+
+See [validation and measurements](docs/validation.md) for native GIO coverage, the isolated hook benchmark, and required GNOME 46/50 desktop checks.
 
 ## Project Layout
 

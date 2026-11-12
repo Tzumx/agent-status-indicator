@@ -43,7 +43,7 @@ The compatible status priority remains error, approval, working, idle. GNOME der
 
 ## Validation and remaining release actions
 
-The original package passed automated checks on 2026-10-21. The extended implementation adds lifecycle, native GIO, session-menu and alert tests. The exact packaged UI still requires a manual smoke test in a fresh GNOME 46 session; GNOME 50 remains undeclared until tested.
+The original package passed automated checks on 2026-10-21. The extended implementation adds lifecycle, native GIO, session-menu and alert tests. See [validation and measurements](validation.md) for reproducible checks and measured hook costs. The exact packaged UI still requires a manual smoke test in a fresh GNOME 46 session; GNOME 50 remains undeclared until tested.
 
 Run:
 

@@ -98,4 +98,4 @@ Update all companion writers together. Older versions may discard optional metad
 
 ## Compatibility and validation
 
-Release metadata declares GNOME 46 only. Native GIO tests and a JavaScript Shell harness run automatically; actual GNOME 46 menu/audio/notification smoke tests and GNOME 50 VM tests remain required before release claims.
+Release metadata declares GNOME 46 only. Native GIO tests and a JavaScript Shell harness run automatically; actual GNOME 46 menu/audio/notification smoke tests and GNOME 50 VM tests remain required before release claims. See [validation and measurements](validation.md).
