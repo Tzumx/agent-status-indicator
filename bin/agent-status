@@ -15,10 +15,12 @@ import queue
 import threading
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
-from agent_status_state import empty_state, normalize_state, timestamp, VALID_STATES
+from agent_status_state import (empty_state, normalize_state, timestamp, VALID_STATES,
+                                transition_session, alert_kind, MAX_ALERTS)
 
 
 APP_NAME = "agent-status-indicator"
@@ -141,6 +143,10 @@ def apply_update(
     event: str = "",
     turn_id: str = "",
     observed_at: float | None = None,
+    project: str = "",
+    action_id: str = "",
+    attention: str = "",
+    legacy_session_id: str = "",
 ) -> dict[str, Any]:
     if agent not in VALID_AGENTS:
         raise ValueError(f"invalid agent: {agent}")
@@ -161,32 +167,54 @@ def apply_update(
         ts = now()
         targets = ("codex", "claude") if agent == "all" else (agent,)
         clear_all = not session_id and state_name == "idle"
+        state.setdefault("alerts", {"generation": uuid.uuid4().hex, "sequence": 0, "events": []})
         for target in targets:
             sid = session_id or default_session_id(target)
             sessions = state.setdefault("sessions", {}).setdefault(target, {})
             if clear_all:
                 sessions.clear()
                 continue
+            if legacy_session_id and legacy_session_id != sid and legacy_session_id in sessions:
+                legacy = sessions.pop(legacy_session_id)
+                if sid not in sessions:
+                    sessions[sid] = legacy
+                else:
+                    # The new identity is already authoritative. Preserve its
+                    # turn while retaining replay guards from the legacy record.
+                    current = sessions[sid]
+                    retired = legacy.get("retired_turns", []) + current.get("retired_turns", [])
+                    if legacy.get("turn_id") and legacy["turn_id"] != current.get("turn_id"):
+                        retired.append(legacy["turn_id"])
+                    current["retired_turns"] = [turn for turn in dict.fromkeys(retired)
+                                                if turn != current.get("turn_id")][-32:]
+                    seen = legacy.get("seen_alerts", []) + current.get("seen_alerts", [])
+                    current["seen_alerts"] = list(dict.fromkeys(seen))[-64:]
+                for item in state["alerts"]["events"]:
+                    if item["agent"] == target and item["session"] == legacy_session_id:
+                        item["session"] = sid
             observed = timestamp(observed_at, ts)
             previous = sessions.get(sid, {})
-            if observed < previous.get("updated_at", 0):
+            source_event = event or ("Reset" if state_name == "idle" and session_id else "")
+            record = transition_session(previous, state_name, message, source_event, turn_id,
+                                        observed, project, action_id, attention)
+            if record is None:
                 continue
-            previous_turn = previous.get("turn_id", "")
-            if turn_id and previous_turn and turn_id != previous_turn and event != "UserPromptSubmit":
+            kind = alert_kind(record) if event else ""
+            key = json.dumps([kind, record["turn_id"], record["action_id"]])
+            seen = record["seen_alerts"]
+            identifiable = bool(record["action_id"] or (kind == "completion" and record["turn_id"]))
+            if kind and identifiable and key in seen:
                 continue
-            # Retain terminal events as tombstones against late tool updates.
-            if (event and event not in {"UserPromptSubmit", "SessionStart"}
-                    and previous.get("state") == "idle"
-                    and previous.get("event") in {"Stop", "Interrupt", "SessionEnd"}
-                    and turn_id and turn_id == previous_turn):
-                continue
-            sessions[sid] = {
-                "state": state_name,
-                "message": message,
-                "updated_at": observed,
-                "event": event,
-                "turn_id": turn_id or (previous_turn if event != "SessionStart" else ""),
-            }
+            changed = (kind, record["action_id"]) != (alert_kind(previous), previous.get("action_id", ""))
+            if kind and changed:
+                alerts = state["alerts"]
+                alerts["sequence"] += 1
+                alerts["events"].append({"sequence": alerts["sequence"], "agent": target,
+                                         "session": sid, "kind": kind, "project": record["project"],
+                                         "updated_at": observed})
+                alerts["events"] = alerts["events"][-MAX_ALERTS:]
+                record["seen_alerts"] = (seen + [key])[-64:]
+            sessions[sid] = record
         state["updated_at"] = ts
         state = normalize_state(state)
         _save_state_unlocked(state)

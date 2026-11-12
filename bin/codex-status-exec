@@ -7,10 +7,12 @@ import json
 import os
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 
 STATUS = Path(__file__).resolve().parent / "agent-status"
+SESSION = f"codex:exec:{uuid.uuid4().hex}"
 
 
 def status_command() -> list[str]:
@@ -21,8 +23,12 @@ def status_command() -> list[str]:
 
 
 def update(state: str, message: str = "", session: str = "") -> None:
-    sid = session or f"codex:exec:{os.getpid()}"
-    subprocess.run([*status_command(), "update", "codex", state, message, "--session", sid], check=False)
+    sid = session or SESSION
+    event = {"turn.completed": "Stop", "interrupted": "Interrupt"}.get(message, "")
+    if state == "error":
+        event = "Error"
+    subprocess.run([*status_command(), "update", "codex", state, event or "codex exec",
+                    "--session", sid, "--event", event], check=False)
 
 
 def state_for_event(event: dict) -> tuple[str | None, str]:
@@ -32,7 +38,7 @@ def state_for_event(event: dict) -> tuple[str | None, str]:
     if event_type == "turn.completed":
         return "idle", event_type
     if event_type in {"turn.failed", "error"}:
-        return "error", str(event.get("message") or event_type)
+        return "error", event_type
     item = event.get("item")
     if isinstance(item, dict) and item.get("type") in {"command_execution", "tool_call"}:
         status = item.get("status")
@@ -45,7 +51,7 @@ def state_for_event(event: dict) -> tuple[str | None, str]:
 
 def main(argv: list[str]) -> int:
     cmd = ["codex", "exec", "--json", *argv]
-    session = f"codex:exec:{os.getpid()}"
+    session = SESSION
     update("working", "codex exec", session)
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=None, text=True)
@@ -55,6 +61,7 @@ def main(argv: list[str]) -> int:
         return 127
     assert proc.stdout is not None
     terminal_error = False
+    completed_turn = False
     interrupted = False
     try:
         for line in proc.stdout:
@@ -69,6 +76,9 @@ def main(argv: list[str]) -> int:
                 terminal_error = True
             elif event.get("type") == "turn.completed":
                 terminal_error = False
+                completed_turn = True
+            elif event.get("type") == "turn.started":
+                completed_turn = False
             state, message = state_for_event(event)
             if state:
                 update(state, message, session)
@@ -85,7 +95,7 @@ def main(argv: list[str]) -> int:
         if interrupted:
             update("idle", "interrupted", session)
         elif returncode == 0 and not terminal_error:
-            update("idle", "completed", session)
+            update("idle", "turn.completed" if completed_turn else "completed", session)
         else:
             update("error", "turn failed" if terminal_error else f"exit {returncode}", session)
     return 130 if interrupted else returncode

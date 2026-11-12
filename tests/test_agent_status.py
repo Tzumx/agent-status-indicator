@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import socket
@@ -51,6 +52,26 @@ class AgentStatusTests(unittest.TestCase):
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_text(), '{broken')
         self.assertEqual(agent_status.load_state()["agents"]["codex"]["state"], "idle")
+
+    def test_identity_migration_preserves_canonical_turn_and_alert_history(self):
+        legacy_id = "claude:/synthetic/session.jsonl"
+        canonical_id = "claude:transcript:canonical"
+        agent_status.apply_update("claude", "approval", session_id=legacy_id,
+                                  event="PermissionRequest", turn_id="old", action_id="a")
+        agent_status.apply_update("claude", "working", session_id=canonical_id,
+                                  event="UserPromptSubmit", turn_id="new")
+        state = agent_status.apply_update("claude", "idle", session_id=canonical_id,
+                                         event="Stop", turn_id="old", legacy_session_id=legacy_id)
+        self.assertNotIn(legacy_id, state["sessions"]["claude"])
+        record = state["sessions"]["claude"][canonical_id]
+        self.assertEqual(record["state"], "working")
+        self.assertEqual(record["turn_id"], "new")
+        self.assertIn("old", record["retired_turns"])
+        self.assertEqual(state["alerts"]["sequence"], 1)
+        self.assertEqual(state["alerts"]["events"][0]["session"], canonical_id)
+        state = agent_status.apply_update("claude", "idle", session_id=canonical_id, event="Stop", turn_id="new")
+        self.assertEqual(state["agents"]["claude"]["state"], "idle")
+        self.assertEqual(state["alerts"]["sequence"], 2)
 
     def test_malformed_records_are_normalized(self):
         for malformed in (None, [], "invalid"):
@@ -158,6 +179,77 @@ class AgentStatusTests(unittest.TestCase):
         self.assertEqual(state["sessions"]["codex"], {})
         self.assertEqual(state["agents"]["claude"]["state"], "working")
 
+    def test_retired_prompt_cannot_reopen_newer_turn(self):
+        for turn in ("first", "second", "first"):
+            agent_status.apply_update("codex", "working", session_id="s", event="UserPromptSubmit", turn_id=turn)
+        record = agent_status.load_state()["sessions"]["codex"]["s"]
+        self.assertEqual(record["turn_id"], "second")
+        agent_status.apply_update("codex", "approval", session_id="s", event="PermissionRequest", turn_id="second")
+        agent_status.apply_update("codex", "working", session_id="s", event="UserPromptSubmit", turn_id="second")
+        self.assertEqual(agent_status.load_state()["agents"]["codex"]["state"], "approval")
+
+    def test_blocked_action_requires_matching_resolution(self):
+        agent_status.apply_update("claude", "approval", session_id="s", event="PermissionRequest", action_id="a")
+        for event, action in (("PreToolUse", "a"), ("PostToolUse", "b"), ("PostToolUse", "")):
+            result = agent_status.apply_update("claude", "working", session_id="s", event=event, action_id=action)
+            self.assertEqual(result["agents"]["claude"]["state"], "approval")
+        result = agent_status.apply_update("claude", "working", session_id="s", event="PostToolUse", action_id="a")
+        self.assertEqual(result["agents"]["claude"]["state"], "working")
+
+    def test_alert_history_survives_next_prompt_and_deduplicates(self):
+        for event, name in (("SessionStart", "idle"), ("UserPromptSubmit", "working"),
+                            ("PermissionRequest", "approval"), ("PermissionRequest", "approval"),
+                            ("PostToolUse", "working"), ("PermissionRequest", "approval"),
+                            ("Stop", "idle"), ("Stop", "idle")):
+            state = agent_status.apply_update("codex", name, session_id="s", event=event, turn_id="one", project="demo", action_id="a")
+        self.assertEqual([item["kind"] for item in state["alerts"]["events"]], ["permission", "completion"])
+        state = agent_status.apply_update("codex", "working", session_id="s", event="UserPromptSubmit", turn_id="two")
+        self.assertEqual(len(state["alerts"]["events"]), 2)
+        self.assertEqual(state["sessions"]["codex"]["s"]["project"], "demo")
+        self.assertEqual(state["version"], 3)
+
+    def test_history_is_bounded_without_dropping_sessions(self):
+        for index in range(270):
+            state = agent_status.apply_update("claude", "error", session_id=f"s{index}", event="Error")
+        self.assertEqual(len(state["alerts"]["events"]), 256)
+        self.assertEqual(state["alerts"]["sequence"], 270)
+        self.assertEqual(len(state["sessions"]["claude"]), 270)
+
+    def test_permission_without_action_id_uses_preceding_tool_identity(self):
+        for action in ("a", "b"):
+            agent_status.apply_update("claude", "working", session_id="s", event="PreToolUse", action_id=action)
+            state = agent_status.apply_update("claude", "approval", session_id="s", event="PermissionRequest")
+            self.assertEqual(state["sessions"]["claude"]["s"]["action_id"], action)
+            agent_status.apply_update("claude", "working", session_id="s", event="PostToolUse", action_id=action)
+        state = agent_status.apply_update("claude", "approval", session_id="s", event="PermissionRequest", action_id="a")
+        self.assertEqual(state["agents"]["claude"]["state"], "working", 'resolved action cannot block again')
+        self.assertEqual([item["kind"] for item in state["alerts"]["events"]], ["permission", "permission"])
+
+    def test_unidentified_permissions_can_alert_again_after_resolution(self):
+        for _ in range(2):
+            agent_status.apply_update("codex", "approval", session_id="s", event="PermissionRequest", turn_id="turn")
+            state = agent_status.apply_update("codex", "working", session_id="s", event="PostToolUse", turn_id="turn")
+        self.assertEqual(len(state["alerts"]["events"]), 2)
+
+    def test_session_reset_rejects_late_same_turn_events(self):
+        agent_status.apply_update("codex", "working", session_id="s", event="UserPromptSubmit", turn_id="old")
+        agent_status.apply_update("codex", "idle", session_id="s")
+        for event in ("PreToolUse", "PostToolUse", "PermissionRequest", "Stop"):
+            state = agent_status.apply_update("codex", "working", session_id="s", event=event, turn_id="old")
+            self.assertEqual(state["sessions"]["codex"]["s"]["event"], "Reset")
+        self.assertEqual(state["alerts"]["events"], [])
+        state = agent_status.apply_update("codex", "working", session_id="s", event="UserPromptSubmit", turn_id="new")
+        self.assertEqual(state["agents"]["codex"]["state"], "working")
+
+    def test_ten_mixed_sessions_and_manual_reset_do_not_invent_completion(self):
+        for index in range(10):
+            agent = "claude" if index % 2 else "codex"
+            state = agent_status.apply_update(agent, "working", session_id=str(index), event="UserPromptSubmit", project="same")
+        self.assertEqual(sum(len(items) for items in state["sessions"].values()), 10)
+        state = agent_status.apply_update("codex", "idle", session_id="0")
+        self.assertEqual(state["alerts"]["events"], [])
+        self.assertEqual(state["agents"]["claude"]["active_sessions"], 5)
+
     def test_update_all_idle_clears_every_session(self):
         agent_status.apply_update("all", "working", session_id="shared")
         agent_status.apply_update("all", "idle")
@@ -223,6 +315,93 @@ class CodexDiagnosticsTests(unittest.TestCase):
 
 
 class HookTests(unittest.TestCase):
+    def test_large_payload_parser_retains_only_supported_metadata(self):
+        payload = {"session_id": "s", "cwd": "/synthetic/demo", "tool_name": "Write",
+                   "tool_input": {"content": "x" * 200000}, "last_assistant_message": "x" * 200000,
+                   "params": {"threadId": "thread", "turn_id": "turn", "body": "x" * 200000}}
+        with patch.object(sys, "stdin", io.StringIO(json.dumps(payload))):
+            parsed = hook.parse_stdin()
+        self.assertEqual(parsed["session_id"], "s")
+        self.assertEqual(parsed["params"], {"threadId": "thread", "turn_id": "turn"})
+        self.assertNotIn("tool_input", parsed)
+        self.assertNotIn("last_assistant_message", parsed)
+
+    def test_large_payloads_do_not_drop_lifecycle_events(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = {**os.environ, "XDG_CACHE_HOME": directory}
+            path = Path(directory) / "agent-status-indicator/state.json"
+            body = "x" * 200000
+            for agent in ("claude", "codex"):
+                for event, extra, expected in (
+                    ("UserPromptSubmit", {"prompt": body}, "working"),
+                    ("PreToolUse", {"tool_name": "Write", "tool_use_id": "a", "tool_input": {"content": body}}, "working"),
+                    ("PermissionRequest", {"tool_name": "Write", "tool_input": {"content": body}}, "approval"),
+                    ("PostToolUse", {"tool_use_id": "a", "tool_response": body}, "working"),
+                    ("Stop", {"last_assistant_message": body}, "idle"),
+                ):
+                    payload = {"session_id": "large", "turn_id": "turn", **extra}
+                    result = subprocess.run([sys.executable, str(ROOT / "bin/agent-status-hook"),
+                                             "--agent", agent, "--event", event], input=json.dumps(payload),
+                                            env=env, capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(json.loads(path.read_text())["agents"][agent]["state"], expected)
+                    self.assertNotIn("x" * 256, path.read_text())
+                state = json.loads(path.read_text())
+                self.assertEqual([item["kind"] for item in state["alerts"]["events"] if item["agent"] == agent],
+                                 ["permission", "completion"])
+
+    def test_upgrade_migrates_transcript_fallback_without_merging_other_sessions(self):
+        for agent in ("claude", "codex"):
+            for with_environment_id in (False, True):
+                with self.subTest(agent=agent, environment_id=with_environment_id), tempfile.TemporaryDirectory() as directory:
+                    env = {**os.environ, "XDG_CACHE_HOME": directory}
+                    for key in ("CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CONVERSATION_ID"):
+                        env.pop(key, None)
+                    if with_environment_id:
+                        env["CODEX_SESSION_ID" if agent == "codex" else "CLAUDE_SESSION_ID"] = "runtime"
+                    legacy_id = f"{agent}:/synthetic/project/one.jsonl"
+                    other_id = f"{agent}:/synthetic/project/two.jsonl"
+                    records = {legacy_id: {"state": "working", "updated_at": time.time()}}
+                    if with_environment_id:
+                        records[other_id] = {"state": "approval", "updated_at": time.time()}
+                    path = Path(directory) / "agent-status-indicator/state.json"
+                    path.parent.mkdir()
+                    path.write_text(json.dumps({"version": 3, "sessions": {agent: records}}))
+                    payload = {"transcript_path": "/synthetic/project/one.jsonl", "cwd": "/synthetic/project"}
+                    with patch.dict(os.environ, env, clear=True):
+                        canonical_id = hook.session_from_payload(payload, agent)
+                    result = subprocess.run([sys.executable, str(ROOT / "bin/agent-status-hook"),
+                                             "--agent", agent, "--event", "Stop"], input=json.dumps(payload),
+                                            env=env, capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    state = json.loads(path.read_text())
+                    self.assertNotIn(legacy_id, state["sessions"][agent])
+                    self.assertEqual(state["sessions"][agent][canonical_id]["state"], "idle")
+                    self.assertEqual(state["agents"][agent]["state"], "approval" if with_environment_id else "idle")
+                    if with_environment_id:
+                        self.assertEqual(state["sessions"][agent][other_id]["state"], "approval")
+
+    def test_explicit_decision_tools_are_claude_only(self):
+        for name in ("AskUserQuestion", "ExitPlanMode"):
+            self.assertEqual(hook.state_for_event("PreToolUse", {"tool_name": name}, "claude"), "approval")
+            self.assertEqual(hook.state_for_event("PreToolUse", {"tool_name": name}, "codex"), "working")
+
+    def test_hook_does_not_spawn_an_interpreter_or_persist_payload_text(self):
+        payload = {"session_id": "s", "cwd": "/private/demo", "message": "secret",
+                   "tool_name": "AskUserQuestion", "tool_use_id": "a"}
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"XDG_CACHE_HOME": directory}), \
+                    patch.object(sys, "argv", ["hook", "--agent", "claude", "--event", "PreToolUse"]), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), \
+                    patch.object(subprocess, "Popen", side_effect=AssertionError("unexpected subprocess")):
+                self.assertEqual(hook.main(), 0)
+            raw = (Path(directory) / "agent-status-indicator/state.json").read_text()
+            self.assertNotIn("secret", raw)
+            self.assertNotIn("/private", raw)
+            record = json.loads(raw)["sessions"]["claude"]["claude:s"]
+            self.assertEqual(record["attention"], "decision")
+            self.assertEqual(record["project"], "demo")
+
     def test_nonterminal_events_are_ignored(self):
         for event, payload in [("SubagentStop", {}), ("SubagentStart", {}), ("Unknown", {}), ("Notification", {}), ("Notification", {"notification_type": "idle_prompt"}), ("SessionStart", {"source": "compact"})]:
             self.assertIsNone(hook.state_for_event(event, payload))
@@ -274,6 +453,22 @@ class WrapperTests(unittest.TestCase):
             self.assertEqual(wrapper.main(["hello"]), 0)
             self.assertEqual(len({call.args[2] for call in update.call_args_list}), 1)
             self.assertEqual(update.call_args_list[-1].args[0], "idle")
+            self.assertEqual(update.call_args_list[-1].args[1], "turn.completed")
+
+    def test_real_wrapper_retains_stop_provenance_without_duplicate_alerts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            fake = path / "codex"
+            fake.write_text(f"#!{sys.executable}\nprint('{{\"type\":\"thread.started\"}}')\nprint('{{\"type\":\"turn.completed\"}}')\n")
+            fake.chmod(0o755)
+            env = {**os.environ, "PATH": str(path) + os.pathsep + os.environ["PATH"], "XDG_CACHE_HOME": directory}
+            result = subprocess.run([sys.executable, str(ROOT / "bin/codex-status-exec")], env=env,
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            state = json.loads((path / "agent-status-indicator/state.json").read_text())
+            record = next(iter(state["sessions"]["codex"].values()))
+            self.assertEqual(record["event"], "Stop")
+            self.assertEqual([item["kind"] for item in state["alerts"]["events"]], ["completion"])
 
     def test_spawn_failure_and_failed_turn_stay_red(self):
         with patch.object(wrapper.subprocess, "Popen", side_effect=FileNotFoundError("codex missing")), patch.object(wrapper, "update") as update:

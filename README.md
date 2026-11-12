@@ -115,7 +115,8 @@ The supplied mappings are:
 | Hook event | Result |
 | --- | --- |
 | `SessionStart` (startup/resume/clear/fork) | `idle` initialization; compaction leaves active work unchanged |
-| `UserPromptSubmit`, `PreToolUse`, `PostToolUse` | `working` |
+| `UserPromptSubmit`, ordinary `PreToolUse`, `PostToolUse` | `working`; generic tool starts preserve pending input |
+| Claude `PreToolUse` for `AskUserQuestion` / `ExitPlanMode` | `approval` with decision metadata |
 | `PermissionRequest`, permission-prompt `Notification` only | `approval` |
 | `Stop`, `SessionEnd`, `Interrupt` (Codex; when supported by the installed version) | `idle` |
 | `StopFailure`, `PostToolUseFailure`, `Error` | `error` |
@@ -302,7 +303,7 @@ gnome-extensions info agent-status-indicator@Ruochen0513.github.io
 
 - Status data stays on the local machine.
 - No network connection is required.
-- Hook payloads are reduced to status, message, event, and session metadata.
+- Hooks retain lifecycle labels, IDs, and project basenames; arbitrary payload messages and tool input are not persisted. Transcript-path fallback identities are hashed without reading the transcript.
 - Linux Unix sockets use `0600` permissions.
 - The project does not read full Codex or Claude Code conversation logs.
 
