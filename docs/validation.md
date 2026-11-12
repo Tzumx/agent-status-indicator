@@ -14,7 +14,7 @@ bash scripts/package-extension.sh
 
 The Python suite uses isolated state and installation directories, tests concurrent processes and locks, and never calls a model. If `gjs` is installed, it also runs `tests/test_extension_gio.mjs` against native GIO. That test exercises the shipped file-monitor, bounded-read, and preference-write code with Shell-facing imports stubbed. Without `gjs`, that test is explicitly skipped.
 
-The Node harness supplies GNOME actors and services as mocks. It covers startup/reload suppression, complete and partial directory-monitor failures, events during reads, malformed/oversized input, open menu stability, ten-session bursts, notification failures, invalid preference types, category preferences, native sound selection, and cleanup. Python regressions cover large hook payloads and transcript-identity upgrades, including newer canonical records and unrelated sessions. These checks do not prove desktop rendering or audible playback.
+The Node harness supplies GNOME actors and services as mocks. It covers startup/reload suppression, complete and partial directory-monitor failures, events during reads, malformed/oversized input, open menu stability, monitor/scale width constraints, focus-driven scrolling, ten-session bursts, notification failures, invalid preference types, category preferences, native sound selection, and cleanup. Python regressions cover large hook payloads and transcript-identity upgrades, including newer canonical records and unrelated sessions. These checks do not prove desktop rendering or audible playback.
 
 ## Desktop release checks
 
@@ -30,6 +30,38 @@ These checks change a desktop installation and must be run deliberately on a tes
 
 Record the exact source revision, archive digest, OS/Shell/tool versions, display backend, hardware, and observed outcomes. Current release validation remains pending for actual GNOME 46 and 50 desktops.
 
+### Local setup check (2026-11-12)
+
+Revision `b9880ee` was installed with `--gnome-only` on Ubuntu 24.04.5 / GNOME 46.0 Wayland. All eight installed companion/extension files matched the source, comparing metadata as JSON. Neither optional user service was active. The running Shell did not discover the newly installed extension; it is queued for the next login. That setup did not exercise the panel, notifications, audio, or Shell resources.
+
+The opt-in hook merge preserved the existing Claude Code settings and hook group, verified against the installer backup. Codex 0.167.2 registered all eight supplied events with no configuration errors, but every hook remained untrusted (`needs_trust`). Claude Code 2.1.322 was present. Real agent hook firing remains unverified; review Codex hooks in `/hooks` and restart agent sessions before testing.
+
+The original archive at setup had SHA-256 `90633d28b68402993739b8c1841c3f9768c310f2f6361e657243493984bab75a`. This setup used source installation; installation through the GNOME archive-install command still needs testing. No GNOME 50 VM tooling was installed, so that target remains untested.
+
+### Offscreen GNOME 46 smoke check (2026-11-12)
+
+The corrected session menu was tested in fresh GNOME Shell 46.0 / Mutter 46.2 Wayland processes on Ubuntu 24.04.5, using a 1024×768 virtual monitor and software rendering with two rendering threads. Checks exercised theme scale factors 1 and 2; physical HiDPI hardware was not tested. The source was `b9880ee` plus the session-menu, width and keyboard-navigation corrections. The exact tested archive has SHA-256 `108dcbd2af07211f56cb0f106545b296881d4f8c19e67c747580746654c58d78`; its five files matched the source before launch.
+
+Bubblewrap provided separate user, process, network and mount namespaces, temporary HOME/XDG directories, a private runtime directory and D-Bus session, and read-only system files. The test had no host desktop sockets, audio/graphics devices, or external network route. The real desktop process/start time, enabled-extension list and hook files were unchanged after testing. The test processes were stopped after each run.
+
+All 73 real-Shell assertions passed:
+
+- One panel icon, ten independent sessions, same-project identity separation, visible agent headings and readable session rows. Ordinary updates preserved the open list and row actors.
+- Native reset-command copying selected only the intended session and preserved the open list. Tab navigation reached every reset button while keeping its whole session row visible; paging buttons also scrolled into view on focus.
+- Eighty-character ASCII and CJK project names stayed within the monitor at both theme scales. Menu widths were 1,012 and 1,000 pixels on the 1,024-pixel monitor. Native text layout checks verified shortening without hiding the full session ID/status suffix.
+- All four MessageTray notification categories, a ten-session burst retaining fourteen notices, silent startup, duplicate suppression, and rejection of delayed old-turn events.
+- Global mute, private preference writes, invalid-preference recovery, malformed/oversized state, atomic replacement and cache-directory deletion/recreation without replay.
+- Zero refresh calls during a settled five-second idle interval; 105 Codex sessions with bounded paging and native page-button activation that kept the list open.
+- Four disable/enable cycles that cancelled reads, timers and monitors and did not replay alerts. The extension manager recorded no errors. Deliberately corrupt fixtures produced the expected diagnostics.
+
+The first real-Shell run exposed unsupported nested submenus: opening a child closed its ancestor and hid the session list. The correction keeps one scrollable Sessions submenu with agent sections, inline details and copy/paging buttons. Screenshots of the corrected native menu were inspected.
+
+Single helper-invocation-to-notification-object observations were completion 305.1 ms, permission 244.0 ms, decision 268.2 ms, error 274.7 ms. They include hook startup, debounce and 50 ms observation intervals; they do not measure banner presentation latency or establish latency distributions.
+
+Separate namespace checks ran the real installer and uninstaller against read-only source copies and synthetic settings. All ten checks passed: GNOME-only installation, legacy and canonical UUIDs, XDG overrides, repeated hook upgrades with backups and preservation, CLI cache placement, both uninstall modes, repeated uninstall, and preservation of unrelated hooks/services. This found and fixed cleanup aborting when the user service manager was unavailable. The complete regression suite then passed 50 Python tests, native GIO, the JavaScript harness, six-entry-point compilation, shell syntax and archive validation.
+
+These results cover a real offscreen Shell with synthetic lifecycle events. Physical input, audible sound/volume, lock and suspend/resume, actual agent hook firing/trust, a normal desktop's resource/latency measurements, and GNOME 50 remain unvalidated. The corrected candidate has not been installed or loaded into the main desktop session.
+
 ## Hook measurements
 
 A Linux-only benchmark compares temporary copies of the working tree with a local Git revision. It never fetches, checks out files, modifies agent configuration, or invokes a model:
@@ -40,18 +72,18 @@ python3 scripts/benchmark-hooks.py --baseline-ref 730855d --events 40 --sessions
 
 The workload sends four lifecycle events to ten independent synthetic sessions split between Claude Code and Codex. Both versions use fresh temporary cache directories. Wall time includes hook startup and the complete transaction; child CPU includes waited descendants. Maximum RSS is the largest `wait4` per-invocation report, not simultaneous aggregate RSS and not GNOME Shell memory.
 
-One run on 2026-11-12 used Ubuntu 24.04.5, Python 3.12.3, and an Intel Core i5-1135G7 (four cores/eight logical CPUs):
+One hook benchmark at revision `b9880ee` on 2026-11-12 used Ubuntu 24.04.5, Python 3.12.3, Linux 7.0.0-42-generic, and an Intel Core i5-1135G7 (four cores/eight logical CPUs):
 
 | Measurement | Upstream 730855d | Extended implementation |
 | --- | ---: | ---: |
-| Mean hook wall time | 180.19 ms | 108.67 ms |
-| Median | 178.25 ms | 104.47 ms |
-| p95 | 215.39 ms | 141.44 ms |
-| Total child CPU, 40 hooks | 6.408 s | 4.091 s |
-| Maximum per-invocation RSS | 16,244 KiB | 20,464 KiB |
-| Final state size | 2,253 bytes | 6,530 bytes |
+| Mean hook wall time | 156.91 ms | 104.10 ms |
+| Median | 145.24 ms | 101.78 ms |
+| p95 | 202.85 ms | 122.78 ms |
+| Total child CPU, 40 hooks | 5.880 s | 3.981 s |
+| Maximum per-invocation RSS | 16,228 KiB | 20,444 KiB |
+| Final state size | 2,252 bytes | 6,523 bytes |
 
-This single synthetic run shows lower startup/CPU cost and increased per-invocation RSS/state size. It predates subsequent robustness fixes and does not establish battery savings, a stable performance guarantee, GNOME idle CPU, Shell memory, or notification latency. Repeat measurements on the release candidate under comparable load.
+This single synthetic run shows lower startup/CPU cost and increased per-invocation RSS/state size. It does not establish battery savings, a stable performance guarantee, GNOME idle CPU, Shell memory, or notification latency. Repeat measurements under comparable load before deriving performance guarantees.
 
 ## GNOME resource measurements still required
 

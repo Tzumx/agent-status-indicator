@@ -3,10 +3,12 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
+import Pango from 'gi://Pango';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {ensureActorVisibleInScrollView} from 'resource:///org/gnome/shell/misc/animationUtils.js';
 import {summarize, COLORS, sessionRows, STATUS_LABELS, AGENT_LABELS, preferences, AlertCursor} from './state.js';
 import {Alerts} from './alerts.js';
 
@@ -86,6 +88,10 @@ export default class AgentStatusExtension extends Extension {
             GLib.get_user_config_dir(), 'agent-status-indicator', 'gnome.json',
         ]));
         this._button = new PanelMenu.Button(0.0, 'Agent Status Indicator', false);
+        this._button.menu.connect('open-state-changed', (_menu, open) => {
+            if (open)
+                this._constrainMenuWidth();
+        });
         this._dot = new St.Icon({
             icon_name: 'media-record-symbolic', icon_size: 14,
             style_class: 'system-status-icon', y_align: Clutter.ActorAlign.CENTER,
@@ -343,6 +349,18 @@ export default class AgentStatusExtension extends Extension {
         this._lastError = message;
     }
 
+    _constrainMenuWidth() {
+        const actor = this._button.menu.actor;
+        const monitor = Main.layoutManager.findIndexForActor(this._button);
+        const area = Main.layoutManager.getWorkAreaForMonitor(monitor);
+        const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+        const padding = actor.get_theme_node().get_length('-arrow-rise');
+        const margins = actor.margin_left + actor.margin_right;
+        // Keep BoxPointer's edge padding and PanelMenu's existing height limit.
+        const width = Math.max(1, Math.floor((area.width - 2 * padding - margins) / scale));
+        actor.style = `${actor.style || ''} max-width: ${width}px;`;
+    }
+
     _render() {
         const {status} = summarize(this._lastState);
         const rows = sessionRows(this._lastState);
@@ -384,8 +402,6 @@ export default class AgentStatusExtension extends Extension {
         }
         const order = JSON.stringify([totals, Object.values(groups).flat().map(row => [row.agent, row.session])]);
         const rebuilding = order !== this._rowOrder || this._groupWidgets.size === 0;
-        const openRows = new Set([...this._rowWidgets].filter(([, widget]) => widget.item.menu.isOpen).map(([key]) => key));
-        const openGroups = new Set([...this._groupWidgets].filter(([, widget]) => widget.menu.isOpen).map(([key]) => key));
         if (rebuilding) {
             this._sessions.menu.removeAll();
             this._rowWidgets.clear();
@@ -395,55 +411,74 @@ export default class AgentStatusExtension extends Extension {
         for (const agent of ['claude', 'codex']) {
             let group = this._groupWidgets.get(agent);
             if (!group) {
-                group = new PopupMenu.PopupSubMenuMenuItem(AGENT_LABELS[agent]);
+                // GNOME permits one open submenu per top-level menu. Keep
+                // agent groups and session controls inside that single submenu.
+                group = new PopupMenu.PopupMenuSection();
+                group.addMenuItem(new PopupMenu.PopupMenuItem(AGENT_LABELS[agent], {reactive: false}));
                 this._groupWidgets.set(agent, group);
                 this._sessions.menu.addMenuItem(group);
             }
             const sessions = groups[agent];
             if (rebuilding && sessions.length === 0)
-                group.menu.addMenuItem(new PopupMenu.PopupMenuItem('No sessions', {reactive: false}));
+                group.addMenuItem(new PopupMenu.PopupMenuItem('No sessions', {reactive: false}));
             if (rebuilding && totals[agent] > 50) {
                 const start = this._sessionPage[agent] * 50;
-                group.menu.addMenuItem(new PopupMenu.PopupMenuItem(
+                group.addMenuItem(new PopupMenu.PopupMenuItem(
                     `Showing ${start + 1}–${start + sessions.length} of ${totals[agent]}`, {reactive: false}));
-                if (start > 0) {
-                    group.menu.addAction('Previous sessions', () => {
-                        this._sessionPage[agent]--;
+                const pager = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+                for (const [label, delta, visible] of [
+                    ['Previous sessions', -1, start > 0],
+                    ['Next sessions', 1, start + sessions.length < totals[agent]],
+                ]) {
+                    if (!visible)
+                        continue;
+                    const button = new St.Button({label, style_class: 'button', can_focus: true});
+                    button.connect('key-focus-in', () =>
+                        ensureActorVisibleInScrollView(this._sessions.menu.actor, pager));
+                    button.connect('clicked', () => {
+                        this._sessionPage[agent] += delta;
                         this._render();
                     });
+                    pager.add_child(button);
                 }
-                if (start + 50 < totals[agent]) {
-                    group.menu.addAction('Next sessions', () => {
-                        this._sessionPage[agent]++;
-                        this._render();
-                    });
-                }
+                group.addMenuItem(pager);
             }
             for (const row of sessions) {
                 const key = JSON.stringify([row.agent, row.session]);
                 let widget = this._rowWidgets.get(key);
                 if (!widget) {
-                    const item = new PopupMenu.PopupSubMenuMenuItem('');
-                    const detail = new PopupMenu.PopupMenuItem('', {reactive: false});
-                    item.menu.addMenuItem(detail);
-                    item.menu.addAction('Copy session reset command', () => {
+                    const item = new PopupMenu.PopupBaseMenuItem({activate: false, hover: false, can_focus: false});
+                    item.remove_style_class_name('popup-inactive-menu-item');
+                    const labels = new St.BoxLayout({vertical: true, x_expand: true});
+                    const label = new St.Label({x_expand: true});
+                    // Keep the session ID and state visible when a project name is long.
+                    label.clutter_text.ellipsize = Pango.EllipsizeMode.START;
+                    const detail = new St.Label({style_class: 'dim-label', x_expand: true});
+                    labels.add_child(label);
+                    labels.add_child(detail);
+                    item.add_child(labels);
+                    const reset = new St.Button({
+                        label: 'Copy reset command', style_class: 'button',
+                        can_focus: true, y_align: Clutter.ActorAlign.CENTER,
+                    });
+                    item.add_child(reset);
+                    reset.connect('key-focus-in', () =>
+                        ensureActorVisibleInScrollView(this._sessions.menu.actor, item));
+                    reset.connect('clicked', () => {
                         const command = `agent-status update ${row.agent} idle --session ${GLib.shell_quote(row.session)}`;
                         St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, command);
                         this._detail.label.set_text('Reset command copied. Review and run it in a terminal.');
                     });
-                    widget = {item, detail};
+                    widget = {item, label, detail, reset};
                     this._rowWidgets.set(key, widget);
-                    group.menu.addMenuItem(item);
+                    group.addMenuItem(item);
                 }
-                widget.item.label.set_text(`${row.project} [${row.short}] · ${STATUS_LABELS[row.state]}`);
+                widget.label.set_text(`${row.project} [${row.short}] · ${STATUS_LABELS[row.state]}`);
                 const time = row.updatedAt > 0 && row.updatedAt < 8640000000000
                     ? new Date(row.updatedAt * 1000).toLocaleString() : 'Time unavailable';
-                widget.detail.label.set_text(`${row.event || 'Last event unavailable'} · ${time}`);
-                if (rebuilding && openRows.has(key))
-                    widget.item.menu.open();
+                widget.detail.set_text(`${row.event || 'Last event unavailable'} · ${time}`);
+                widget.reset.set_accessible_name(`Copy reset command for ${row.project} [${row.short}]`);
             }
-            if (rebuilding && openGroups.has(agent))
-                group.menu.open();
         }
     }
 }

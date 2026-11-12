@@ -24,6 +24,8 @@ const failedMonitorPaths = new Set();
 let notificationFailure = false;
 let audioFailure = false;
 let clipboard = '';
+const scrollRequests = [];
+const menuGeometry = {width: 1024, scale: 1, padding: 6, monitor: 1, margin: 0};
 class GLibError extends Error {
     constructor(message, code) { super(message); this.code = code; }
     matches(_domain, code) { return this.code === code; }
@@ -143,9 +145,29 @@ class MenuItem {
     constructor(text) { this.label = {set_text: value => { this.text = value; }}; this.text = text; }
 }
 class Menu {
+    constructor() {
+        this.signals = new Map();
+        this.actor = {style: '', margin_left: 0, margin_right: 0,
+            get_theme_node: () => ({get_length: () => menuGeometry.padding})};
+    }
+    connect(name, callback) {
+        const handlers = this.signals.get(name) || [];
+        handlers.push(callback);
+        this.signals.set(name, handlers);
+    }
+    emit(name, value) {
+        for (const handler of this.signals.get(name) || [])
+            handler(this, value);
+    }
     items = [];
     actions = [];
-    addMenuItem(item) { this.items.push(item); }
+    addMenuItem(item) {
+        this.items.push(item);
+        if (item instanceof Menu)
+            item.parentMenu = this;
+        else if (item.menu)
+            item.menu.parentMenu = this;
+    }
     addAction(label, callback) {
         const action = new MenuItem(label);
         action.callback = callback;
@@ -153,13 +175,48 @@ class Menu {
         return action;
     }
     removeAll() { this.items = []; this.actions = []; }
-    open() { this.isOpen = true; }
+    open() {
+        if (this.isOpen)
+            return;
+        this.isOpen = true;
+        this.emit('open-state-changed', true);
+        if (this.parentMenu) {
+            let root = this.parentMenu;
+            while (root.parentMenu)
+                root = root.parentMenu;
+            root.openedSubMenu?.close();
+            root.openedSubMenu = this;
+        }
+    }
+    close() { this.isOpen = false; this.emit('open-state-changed', false); }
 }
+class Actor {
+    constructor(props = {}) { Object.assign(this, props); this.children = []; this.signals = new Map(); }
+    add_child(child) { this.children.push(child); }
+    remove_style_class_name(value) { this.removedStyle = value; }
+    connect(name, callback) { this.signals.set(name, callback); }
+    set_accessible_name(value) { this.accessible = value; }
+}
+class Label extends Actor {
+    constructor(props) { super(props); this.clutter_text = {}; }
+    set_text(value) { this.text = value; }
+}
+class ActionButton extends Actor {
+    click() { this.signals.get('clicked')(); }
+    focus() { this.signals.get('key-focus-in')?.(); }
+}
+class Section extends Menu {}
 class SubMenu extends MenuItem {
     constructor(text) { super(text); this.menu = new Menu(); }
 }
 class Button {
-    constructor() { this.menu = new Menu(); }
+    constructor() {
+        this.menu = new Menu();
+        this.menu.connect('open-state-changed', () => {
+            this.menu.actor.style = 'max-height: 700px;';
+            this.menu.actor.margin_left = this.menu.actor.margin_right = menuGeometry.margin;
+        });
+    }
     add_child(icon) { this.icon = icon; }
     set_accessible_name(value) { this.accessible = value; }
     show() { this.visible = true; }
@@ -183,7 +240,7 @@ class Source {
 }
 const context = vm.createContext({
     TextDecoder, TextEncoder, Uint8Array, console: {error(message) { loggedErrors.push(message); }},
-    global: {display: {get_sound_player() {
+    global: {stage: {}, display: {get_sound_player() {
         if (audioFailure)
             throw Error('audio unavailable');
         return {
@@ -255,23 +312,38 @@ const imports = {
         AppInfo: {launch_default_for_uri: url => openedUrls.push(url)},
     }},
     'gi://St': {default: {
-        Icon, ClipboardType: {CLIPBOARD: 1},
+        ThemeContext: {get_for_stage: () => ({scale_factor: menuGeometry.scale})},
+        Icon, BoxLayout: Actor, Label, Button: ActionButton, ClipboardType: {CLIPBOARD: 1},
         Clipboard: {get_default: () => ({set_text: (_type, text) => { clipboard = text; }})},
     }},
     'gi://Clutter': {default: {ActorAlign: {CENTER: 1}}},
+    'gi://Pango': {default: {EllipsizeMode: {START: 1}}},
     'resource:///org/gnome/shell/ui/main.js': {
         panel: {addToStatusArea(id, button, position, side) {
             assert.equal(side, 'left'); assert.equal(position, 0);
             assert(!registrations.has(id)); registrations.set(id, button);
         }},
+        layoutManager: {
+            findIndexForActor: actor => { assert(actor instanceof Button); return menuGeometry.monitor; },
+            getWorkAreaForMonitor: index => {
+                assert.equal(index, menuGeometry.monitor, 'use the indicator monitor');
+                return {width: menuGeometry.width};
+            },
+        },
         messageTray: {add() {}},
+    },
+    'resource:///org/gnome/shell/misc/animationUtils.js': {
+        ensureActorVisibleInScrollView: (view, actor) => scrollRequests.push([view, actor]),
     },
     'resource:///org/gnome/shell/ui/messageTray.js': {
         Source, Notification: class { constructor(props) { Object.assign(this, props); } },
         Urgency: {NORMAL: 1, HIGH: 2},
     },
     'resource:///org/gnome/shell/ui/panelMenu.js': {Button},
-    'resource:///org/gnome/shell/ui/popupMenu.js': {PopupMenuItem: MenuItem, PopupSubMenuMenuItem: SubMenu},
+    'resource:///org/gnome/shell/ui/popupMenu.js': {
+        PopupMenuItem: MenuItem, PopupSubMenuMenuItem: SubMenu,
+        PopupBaseMenuItem: Actor, PopupMenuSection: Section,
+    },
     'resource:///org/gnome/shell/extensions/extension.js': {
         Extension: class {uuid = 'test-extension'; metadata = {url: 'https://github.com/Ruochen0513/agent-status-indicator'};},
     },
@@ -342,22 +414,47 @@ assert.equal(sources.filter(source => !source.destroyed).length, 11, 'separate s
 assert.equal([...timers.values()].filter(timer => timer.delay === 1000).length, 1);
 runTimers(1000);
 assert.equal(sounds.at(-1), 'dialog-error');
-const codexGroup = instance._sessions.menu.items.find(item => item.text === 'Codex');
-assert.equal(codexGroup.menu.items.length, 10);
-codexGroup.menu.items[0].menu.open();
-const preservedRow = codexGroup.menu.items[0];
+instance._button.menu.open();
+assert.match(instance._button.menu.actor.style, /max-height: 700px;/, 'preserve native height constraints');
+assert.match(instance._button.menu.actor.style, /max-width: 1012px;/, 'keep the menu within its monitor and arrow gaps');
+instance._button.menu.close();
+Object.assign(menuGeometry, {width: 1920, scale: 2, padding: 12, monitor: 2, margin: 4});
+instance._button.menu.open();
+assert.match(instance._button.menu.actor.style, /max-width: 944px;/, 'convert physical work area and margins to CSS pixels');
+assert.equal((instance._button.menu.actor.style.match(/max-width:/g) || []).length, 1, 'reopening does not accumulate width rules');
+instance._button.menu.close();
+Object.assign(menuGeometry, {width: 800, scale: 1, padding: 6, monitor: 1, margin: 0});
+instance._button.menu.open();
+assert.match(instance._button.menu.actor.style, /max-width: 788px;/, 'recompute width after moving to a smaller monitor');
+instance._sessions.menu.open();
+const codexGroup = instance._groupWidgets.get('codex');
+assert(codexGroup instanceof Section, 'agent groups must not open a second native submenu');
+assert.equal(codexGroup.items.length, 11, 'one heading plus ten session rows');
+assert(codexGroup.items.every(item => !(item instanceof SubMenu)), 'session controls stay inline');
+const preservedRow = codexGroup.items[1];
 await updateState({...log(12, burst), sessions: {codex: Object.fromEntries(
     burst.map(item => [item.session, {state: 'error', project: 'same', updated_at: 1}]))}});
-assert.equal(instance._groupWidgets.get('codex').menu.items[0], preservedRow, 'ordinary events preserve open menu actors');
-assert.equal(preservedRow.menu.isOpen, true);
-codexGroup.menu.items[0].menu.actions[0].callback();
+assert.equal(instance._groupWidgets.get('codex').items[1], preservedRow, 'ordinary events preserve open menu actors');
+assert.equal(instance._sessions.menu.isOpen, true, 'session updates keep the native submenu open');
+const firstWidget = [...instance._rowWidgets.values()].find(widget => widget.item === preservedRow);
+assert.match(firstWidget.reset.accessible, /Copy reset command for same/);
+firstWidget.reset.focus();
+assert.deepEqual(scrollRequests.at(-1), [instance._sessions.menu.actor, firstWidget.item], 'keyboard focus reveals the whole session row');
+firstWidget.reset.click();
+assert.equal(instance._sessions.menu.isOpen, true, 'copying a command does not close the session list');
 assert.match(clipboard, /^agent-status update codex idle --session '/);
 assert.match(instance._detail.text, /Review and run/);
 await updateState({...log(12, burst), sessions: {codex: Object.fromEntries(
     Array.from({length: 150}, (_unused, index) => ['page-' + index, {state: 'working'}]))}});
 assert.equal(instance._rowWidgets.size, 50, 'large files cannot allocate unbounded menu actors');
 const firstPage = [...instance._rowWidgets.keys()][0];
-instance._groupWidgets.get('codex').menu.actions.find(action => action.text === 'Next sessions').callback();
+const nextPage = instance._groupWidgets.get('codex').items.flatMap(item => item.children || [])
+    .find(button => button.label === 'Next sessions');
+nextPage.focus();
+assert.equal(scrollRequests.at(-1)[0], instance._sessions.menu.actor);
+assert(scrollRequests.at(-1)[1].children.includes(nextPage), 'keyboard focus reveals the pager row');
+nextPage.click();
+assert.equal(instance._sessions.menu.isOpen, true, 'paging keeps the session list open');
 assert.notEqual([...instance._rowWidgets.keys()][0], firstPage);
 assert.equal(instance._rowWidgets.size, 50);
 await updateState({...log(12, burst), sessions: {codex: Object.fromEntries(

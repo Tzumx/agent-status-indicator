@@ -20,9 +20,11 @@ The default installer still provides the upstream desktop clients and service. G
 
 ## Sessions and states
 
-Open the indicator, expand **Sessions**, then Claude Code or Codex. Each session has its own project basename, stable abbreviated identifier, state, and last-event time. Missing project metadata displays **Session**. Sessions in the same project remain separate. The summary counts permission requests, decisions, errors, working, finished, and idle sessions.
+Open the indicator and expand **Sessions**. Claude Code and Codex headings group the rows in one scrollable submenu; session details and reset controls remain inline. Each session has its own project basename, stable abbreviated identifier, state, and last-event time. Missing project metadata displays **Session**. Sessions in the same project remain separate. The summary counts permission requests, decisions, errors, working, finished, and idle sessions.
 
 Each agent group shows up to fifty sessions per page with **Previous sessions** and **Next sessions** controls. Counts include every valid session; paging bounds Shell actors without dropping records. Ordinary event updates preserve open row widgets where ordering remains unchanged.
+
+When opened, the menu fits the available width of the indicator’s monitor. Long project labels are shortened from the start to keep the session ID and status visible. Keyboard focus scrolls reset and paging controls into view with their surrounding row.
 
 The persistent protocol retains `idle`, `working`, `approval`, and `error`. GNOME derives **Decision required** from optional approval metadata and **Finished responding** only from a confirmed normal `Stop`. Session initialization, interruption, reset, and process exit alone never establish successful response completion.
 
@@ -90,7 +92,7 @@ The extension watches the state file's parent directory and relevant ancestor, i
 
 If monitoring is unavailable, six one-shot recovery attempts back off from one to thirty seconds. **Refresh status** retries immediately. This is a recovery path, not a recurring status scan.
 
-A killed agent may leave a working or approval record. Time alone does not establish completion. Expand that session and choose **Copy session reset command**. Review the copied command and run it in a terminal to reset only that session. The extension never executes the reset or writes the state file.
+A killed agent may leave a working or approval record. Time alone does not establish completion. Find that session and select its **Copy reset command** button. Review the copied command and run it in a terminal to reset only that session. The extension never executes the reset or writes the state file.
 
 For an unreadable cache, `agent-status update all idle` explicitly backs it up before resetting. A global reset affects every session; use the session-specific command when possible.
 
@@ -98,4 +100,4 @@ Update all companion writers together. Older versions may discard optional metad
 
 ## Compatibility and validation
 
-Release metadata declares GNOME 46 only. Native GIO tests and a JavaScript Shell harness run automatically; actual GNOME 46 menu/audio/notification smoke tests and GNOME 50 VM tests remain required before release claims. See [validation and measurements](validation.md).
+Release metadata declares GNOME 46 only. Native GIO and JavaScript harness tests are supplemented by real offscreen GNOME 46 smoke checks. Interactive desktop, audio and suspend/resume checks, resource measurements, actual agent hook firing/trust and GNOME 50 VM tests remain required before release claims. See [validation and measurements](validation.md).
