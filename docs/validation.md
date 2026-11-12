@@ -28,7 +28,7 @@ These checks change a desktop installation and must be run deliberately on a tes
 6. Repeat on Ubuntu 26.04 / GNOME 50 in a VM. Use a disposable test package to exercise that version; add 50 to release metadata only after success. GNOME 46 X11 is best effort when available; GNOME 50 validation targets Wayland.
 7. Exercise install/upgrade/uninstall in the disposable account, including XDG overrides and preservation of unrelated hooks/settings. The normal unit suite does not uninstall from the real user account.
 
-Record the exact source revision, archive digest, OS/Shell/tool versions, display backend, hardware, and observed outcomes. Current release validation remains pending for actual GNOME 46 and 50 desktops.
+Record the exact source revision, archive digest, OS/Shell/tool versions, display backend, hardware, and observed outcomes. Offscreen coverage and remaining desktop checks are recorded below.
 
 ### Local setup check (2026-11-12)
 
@@ -36,7 +36,7 @@ Revision `b9880ee` was installed with `--gnome-only` on Ubuntu 24.04.5 / GNOME 4
 
 The opt-in hook merge preserved the existing Claude Code settings and hook group, verified against the installer backup. Codex 0.167.2 registered all eight supplied events with no configuration errors, but every hook remained untrusted (`needs_trust`). Claude Code 2.1.322 was present. Real agent hook firing remains unverified; review Codex hooks in `/hooks` and restart agent sessions before testing.
 
-The original archive at setup had SHA-256 `90633d28b68402993739b8c1841c3f9768c310f2f6361e657243493984bab75a`. This setup used source installation; installation through the GNOME archive-install command still needs testing. No GNOME 50 VM tooling was installed, so that target remains untested.
+The original archive at setup had SHA-256 `90633d28b68402993739b8c1841c3f9768c310f2f6361e657243493984bab75a`. This setup used source installation; the corrected candidate archive was subsequently checked as described below. No GNOME 50 VM tooling was installed, so that target remains untested.
 
 ### Offscreen GNOME 46 smoke check (2026-11-12)
 
@@ -62,6 +62,12 @@ Separate namespace checks ran the real installer and uninstaller against read-on
 
 These results cover a real offscreen Shell with synthetic lifecycle events. Physical input, audible sound/volume, lock and suspend/resume, actual agent hook firing/trust, a normal desktop's resource/latency measurements, and GNOME 50 remain unvalidated. The corrected candidate has not been installed or loaded into the main desktop session.
 
+### GNOME 46 archive installation check (2026-11-12)
+
+At revision `802e7b8`, the same candidate archive was installed into a temporary home with `gnome-extensions install`, then upgraded with `--force`, before starting a fresh isolated GNOME 46 Shell. All five installed files matched the archive by SHA-256. The 73 native smoke assertions passed again, followed by three checks of GNOME's native extension-removal API: removal succeeded, the installed directory disappeared, and an unrelated extension remained. This gives 76 passing assertions. Removal was exercised while the disposable Shell was running; the standalone uninstall confirmation application was not tested.
+
+The archive digest remained `108dcbd2af07211f56cb0f106545b296881d4f8c19e67c747580746654c58d78`. Neither the corrected source nor archive was installed into the main desktop session.
+
 ## Hook measurements
 
 A Linux-only benchmark compares temporary copies of the working tree with a local Git revision. It never fetches, checks out files, modifies agent configuration, or invokes a model:
@@ -85,10 +91,35 @@ One hook benchmark at revision `b9880ee` on 2026-11-12 used Ubuntu 24.04.5, Pyth
 
 This single synthetic run shows lower startup/CPU cost and increased per-invocation RSS/state size. It does not establish battery savings, a stable performance guarantee, GNOME idle CPU, Shell memory, or notification latency. Repeat measurements under comparable load before deriving performance guarantees.
 
+## Offscreen GNOME 46 resource comparison (2026-11-12)
+
+A single isolated GNOME 46 Shell compared the extension disabled, upstream polling at `730855d`, and the event-driven implementation at `802e7b8`. Each version had three 15-second idle intervals, rotating version order between rounds, followed by a burst and a ten-session workload. Menus stayed closed, sounds were disabled, and the optional daemon was absent. Software rendering used two threads, with the disposable process at low priority. The main Shell process/start time, enabled-extension list and hook-file hashes remained unchanged.
+
+The common in-Shell driver wrote synthetic state through atomic replacement. It sampled process CPU ticks, RSS/PSS and main-thread context switches before and after each interval; refresh callbacks and alert dispatches supplied read counts and latency observations. CPU ticks had 10 ms resolution. Results include the test Shell and measurement driver, not just the extension.
+
+| Idle measurement, three 15-second intervals | Disabled | Upstream polling | Event-driven |
+| --- | ---: | ---: | ---: |
+| Status reads per interval | 0 / 0 / 0 | 15 / 15 / 15 | 0 / 0 / 0 |
+| Shell CPU time, ms | 130 / 30 / 30 | 50 / 30 / 50 | 10 / 10 / 20 |
+| Main-thread voluntary context switches | 23 / 3 / 6 | 92 / 88 / 97 | 2 / 2 / 8 |
+| Median ending RSS, KiB | 253,816 | 253,844 | 253,720 |
+| Median ending PSS, KiB | 172,024 | 172,049 | 171,925 |
+
+These absolute memory observations overlap. Version switching and allocator caches in the same Shell prevent treating the small differences as reliable incremental memory savings. The initial disabled interval also included more background activity. CPU observations and context switches do not establish battery savings or kernel wakeup counts. Host scheduling statistics were disabled and perf access restricted; neither setting was changed.
+
+| Workload | Disabled CPU, ms | Upstream CPU, ms | Event-driven CPU, ms | Event-driven alerts |
+| --- | ---: | ---: | ---: | ---: |
+| 40 atomic writes, 25 ms apart, about 2.8 s including settling | 60 | 50 | 250 | 32 / 32 |
+| 60 writes across ten sessions, 250 ms apart, about 16.9 s including settling | 70 | 90 | 500 | 48 / 48 |
+
+Each five-update cycle contained one working update and four alert categories. The event-driven version delivered all 80 alert records. It performed eight refreshes for the burst and sixty for the slower workload; upstream performed two and seventeen respectively. Additional session rendering and notifications cost more CPU during activity than the upstream aggregate-only display. These are different feature sets, so the active CPU comparison is a trade-off, not an equal-functionality performance claim.
+
+State-file replacement to notification dispatch/object creation had median/p95 104.1/226.0 ms for the 32 burst notices and 205.5/220.0 ms for the 48 ten-session notices. The p95 uses the nearest-rank method. These synthetic observations exclude hook startup and do not measure banner presentation. The offscreen comparison supplements, but does not replace, the desktop measurements below.
+
 ## GNOME resource measurements still required
 
 Compare extension-disabled, upstream polling, and event-driven versions with the daemon stopped. Keep hardware, desktop settings, other extensions, and live session count constant.
 
 For each version, collect at least three equal idle intervals, a burst workload, and a ten-session workload. Record Shell CPU time, RSS or PSS/memory delta, scheduling/wakeup activity, and median/p95 event-to-notification latency. Use the same process and measurement method throughout; distinguish whole-Shell background activity from incremental extension cost.
 
-Verify zero recurring status reads in the event-driven idle case. Record the tools, interval lengths, sample counts, event timestamps, and raw results before deriving comparisons. These desktop measurements have not been run; no numerical idle or power claim is made.
+Verify zero recurring status reads in the event-driven idle case. Record the tools, interval lengths, sample counts, event timestamps, and raw results before deriving comparisons. These normal desktop measurements have not been run. The offscreen results above do not establish incremental desktop resource use or power savings.
