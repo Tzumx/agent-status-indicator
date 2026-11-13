@@ -12,9 +12,9 @@ for script in install.sh scripts/*.sh uninstall.sh; do bash -n "$script" || exit
 bash scripts/package-extension.sh
 ```
 
-The Python suite uses isolated state and installation directories, tests concurrent processes and locks, and never calls a model. If `gjs` is installed, it also runs `tests/test_extension_gio.mjs` against native GIO. That test exercises the shipped file-monitor, bounded-read, and preference-write code with Shell-facing imports stubbed. Without `gjs`, that test is explicitly skipped.
+The Python suite uses isolated state and installation directories, tests concurrent processes and locks, and never calls a model. If `gjs` is installed, it also runs `tests/test_extension_gio.mjs` against native GIO. That test exercises the shipped file-monitor, bounded-read, legacy preference, and private atomic usage-consent write code with Shell-facing imports stubbed. Without `gjs`, that test is explicitly skipped.
 
-The Node harness supplies GNOME actors and services as mocks. It covers startup/reload suppression, complete and partial directory-monitor failures, events during reads, malformed/oversized input, open menu stability, monitor/scale width constraints, focus-driven scrolling, ten-session bursts, notification failures, invalid preference types, category preferences, native sound selection, and cleanup. Python regressions cover large hook payloads and transcript-identity upgrades, including newer canonical records and unrelated sessions. These checks do not prove desktop rendering or audible playback.
+The Node harness supplies GNOME actors and services as mocks. It covers startup/reload suppression, complete and partial directory-monitor failures, events during reads, malformed/oversized input, open menu stability, monitor/scale width constraints, focus-driven scrolling in normal and recovery views, hidden reset controls, ten-session bursts, notification failures, invalid preference types, category preferences, native sound selection, and cleanup. Python regressions cover large hook payloads and transcript-identity upgrades, including newer canonical records and unrelated sessions. New usage tests cover opt-in consent, bounded session reads, identity/path/type checks, partial and malformed records, latest-request context, concurrent atomic writes, stale snapshots, privacy filtering, Claude status-line forwarding, and reset scheduling/deduplication. These checks do not prove desktop rendering or audible playback.
 
 ## Desktop release checks
 
@@ -84,6 +84,67 @@ Single helper-invocation-to-notification-object observations in the VM were comp
 
 The main Shell process/start time, enabled-extension list and hook-file hashes were unchanged. No final-candidate installation or activation occurred in the main desktop session. Physical input/audio, volume, lock/suspend/resume, actual agent hook firing/trust, and normal desktop resource/wakeup/banner-latency measurements remain release checks.
 
+### Panel placement and recovery menu check (2026-11-12)
+
+The UI revision based on `671d457` places the indicator in the right status area and hides reset buttons until **Troubleshooting → Show reset controls** is enabled. Refresh and hook setup help are grouped under Troubleshooting. The tested archive SHA-256 is `48d00741a46d57cd8b893404658c0a32e3713dcbf10bd887f0a0c400d0f00c1c`.
+
+This exact archive passed fresh installation, forced upgrade and native removal in the isolated GNOME 46 and GNOME 50 environments described above. All five installed file hashes matched the archive. GNOME 46 passed 119 native assertions; GNOME 50 passed 113. Both checked keyboard access in normal and recovery views, copying the selected session command without state/config changes or notifications, hidden reset controls after four enable cycles, and 80-character ASCII/CJK labels at theme scales 1 and 2. Screenshots were inspected. The six additional GNOME 46 assertions verified moving the existing panel actor from left to right while preserving system-control position, other panel actors, session widgets and the running extension.
+
+All 50 Python tests passed on the host and guest, including native GIO. The host JavaScript harness, six-entry-point compilation, shell syntax and archive validation also passed. The main Shell process/start time, enabled-extension list and hook files remained unchanged. This UI revision was not installed into the main desktop; physical input/audio and the remaining desktop release checks are still required.
+
+### Native settings and readable session menu (2026-11-13)
+
+The candidate based on `671d457` adds a standard GTK4/libadwaita preferences window, per-event native GSettings keys, legacy JSON fallbacks, separate overview counts, and readable session rows. Its archive SHA-256 is `427d180efd87bddaeb13ae2ad066108a232dc54031f9721c4b1bf4a4485d6ab4`.
+
+The exact archive passed fresh installation, forced upgrade, schema compilation and native removal on GNOME 46 and 50. All nine shipped file hashes matched the installed files. GNOME 46 passed 142 native assertions; GNOME 50 passed 136. The six additional GNOME 46 checks covered live panel movement. Both environments checked long ASCII/CJK names at theme scales 1 and 2, keyboard access, full status/identifier visibility, overview contrast, notification deduplication, file-monitor recovery and enable/disable cleanup.
+
+Eleven preferences assertions on each version exercised the real extension preferences class and GTK/Adwaita window: legacy initialization, independent category updates, custom sound-path persistence, native mute, preservation of the JSON file, and closing both during and after loading. The indicator received settings changes from the separate preferences process. The native sound chooser opened and cancelled cleanly; no physical file-selection walkthrough or audible playback was performed. Native GSettings used an isolated keyfile backend for these tests. Screenshots of the menu and preferences were inspected on both versions.
+
+All 50 Python tests passed on the host and GNOME 50 guest, including native GIO. The JavaScript harness, six-entry-point compilation, shell syntax and archive validation passed. The main Shell process/start time, enabled-extension list and hook files were unchanged. The candidate remains uninstalled in the main desktop. Physical input/audio, the normal desktop settings backend, lock/suspend/resume and the remaining desktop release checks still require validation.
+
+### Outdated notification cleanup (2026-11-13)
+
+The notification-cleanup candidate has archive SHA-256 `854fba5476e353440d3a9d1dbea2c0df53f6bfddeacee9c0871b214186676bd5`. This exact package passed fresh installation, forced upgrade and native removal on GNOME 46 and 50, with all nine installed file hashes matching the archive. GNOME 46 passed 149 native assertions; GNOME 50 passed 143.
+
+Native checks resolved completion, permission, decision and error notices individually, preserving the other sessions' notices and an unrelated application's notification. A ten-session burst retained one current notice per session. Duplicate and delayed events did not clear a newer request. Muted transitions still removed resolved notices, while alert-history resets preserved unresolved requests. Existing preferences, rendering, monitor recovery, malformed-file and enable/disable checks passed again.
+
+The JavaScript harness also checked malformed/missing session data, manual dismissal without replay, same-session replacement, resolved queued sounds and cleanup after a history reset. The host and guest each passed all 50 Python tests, including native GIO; compilation, shell syntax and archive validation passed. Tests used the isolated desktops and settings backend described above. The main Shell process/start time, enabled-extension list and hook files remained unchanged. No installation or reload occurred in the main desktop; remaining physical desktop release checks still apply.
+
+### Optional usage display and reset alerts (2026-11-13)
+
+The usage candidate is revision `671d457` plus the settings, notification-cleanup and usage changes. Its archive SHA-256 is `7758b411ab3301cd384b4c871ecf7449b3b242e09b935ee9668807dc3f1c2216`. This exact package passed fresh installation, forced upgrade and native removal on isolated GNOME 46 and 50; all nine installed file hashes matched. GNOME 46 passed 167 native assertions and GNOME 50 passed 161, using the isolation and software-rendering environments described above.
+
+New native checks covered hidden empty groups, the opt-in empty-group setting, independent account/context display switches, native level bars for two account windows and one session, and five configurable alert categories. Seventeen preferences assertions included both source switches defaulting to off, saving/revoking Codex consent with mode 0600, preserving the legacy JSON file and cancelling work on close. Menu, context-bar and preferences screenshots were inspected on both versions.
+
+A synthetic future quota deadline produced one native reset notification with wording that distinguishes the reported reset time from refreshed usage. Repeated rendering did not duplicate it; newer quota metadata removed it. Opting out removed the deadline timer. JavaScript tests additionally exercised past-deadline startup suppression, mute, an armed deadline passed during a simulated resume, malformed cleanup data and a failing notification backend. Physical suspend/resume and audible reset-sound playback were not exercised.
+
+All 59 Python tests passed on both the host (Python 3.12.3) and guest (Python 3.14.4), including nine synthetic collector/state tests. These verified consent gating, bounded reads, matching session identity, regular-file/path checks, partial/malformed input, numeric bounds, latest-request context, concurrent updates, stale snapshots, privacy filtering and Claude status-line forwarding. Native GIO also verified private atomic consent replacement, recursive directory creation and cancellation without changing saved consent. The JavaScript harness, six-entry-point compilation, shell syntax and archive validation passed.
+
+No real Codex session file or Claude status-line payload was collected during these tests. Agent/version-specific data availability, real hook firing/trust, normal desktop settings backend, physical input/audio, lock/suspend and updated resource/latency measurements remain release checks. No collector overhead or power improvement is claimed. The main Shell process/start time, enabled-extension list and hook files were unchanged; this candidate was not installed or loaded in the main desktop.
+
+### Configurable panel icon (2026-11-13)
+
+The icon candidate has archive SHA-256 `484284ba4201a2b3c58672b12e2adb7c97d890a5015d91a747561fd523dbc3ad`. It adds one bundled symbolic SVG and a native Circle/Robot head preference, preserving Circle as the default and the existing 14-pixel icon size. Fresh installation, forced upgrade and native removal passed on GNOME 46 and 50, with all ten installed file hashes matching the archive.
+
+GNOME 46 passed 183 native assertions and GNOME 50 passed 177. The native preferences selector saved Robot head, received external setting changes and restored Circle when reset. Five screenshots per version confirmed the robot head in idle gray, working green, waiting amber, error red and finished blue. Pixel analysis accounted for antialiasing and verified the head's visible internal gaps and the expected foreground colors, rather than relying only on the icon property or CSS string. Icon-color screenshots used scale 1; the existing menu scale/width checks also passed.
+
+All 59 Python tests passed on the host and guest, including installation of the SVG. JavaScript checks exercised both shapes across the display states and rejected invalid icon choices. Native GIO, compilation, shell syntax, SVG/schema XML parsing and archive validation passed. The main desktop and installed hooks remained unchanged. The candidate was not installed or reloaded into that session; the remaining physical desktop checks above still apply.
+
+### Audit corrections and final package (2026-11-13)
+
+Revision `b39ecbf` contains the final settings, usage and icon changes. Its archive SHA-256 is `ec0c65da5ab5a9e00233733bf468ae3ae3c349942acbfe78bb179de0540462b9`. Fresh installation, forced upgrade and native removal passed in the isolated GNOME 46 and GNOME 50 environments described above; all ten installed file hashes matched the archive. GNOME 46 passed 187 native assertions and GNOME 50 passed 181, including the existing preferences, robot colors, menu bounds, notification cleanup and lifecycle checks.
+
+Four corrections have regression coverage:
+
+- The Claude status-line wrapper kills its owned process group on a two-second timeout or termination on POSIX, then reaps its child. Synthetic timeout and termination tests verify that the foreground child stops; no existing user process is targeted.
+- Invalid session-state types no longer replace valid cached data or dismiss unresolved notices. Native checks preserve the last valid ten-session menu and nine unresolved notices, then recover on valid input.
+- Display-only preference changes preserve an already queued sound; alert and sound preference changes can still cancel it.
+- One shared quota deadline updates an open menu when a window expires, including while reset alerts are disabled or muted. JavaScript tests verify no late notification replay when alerts are subsequently enabled; native checks verify expiry without a notification when reset alerts are disabled. No polling is added.
+
+All 61 Python tests passed on the host (Python 3.12.3) and guest (Python 3.14.4), including the two new process-cleanup regressions. The JavaScript harness, native GIO, six-entry-point compilation, shell syntax and archive validation passed. Each of the three feature commits was also checked independently against its staged source and, where applicable, its matching package.
+
+The main Shell process/start time, enabled-extension list and hook-file hashes remained unchanged. The final package was not installed or reloaded in the main desktop. Physical input/audio and volume, the normal desktop settings backend, lock/suspend/resume, real agent hook firing/trust and usage availability, and updated desktop resource/latency measurements remain release checks. Synthetic metadata fixtures do not establish support for every agent version or refresh account quota after a reported deadline.
+
 ## Hook measurements
 
 A Linux-only benchmark compares temporary copies of the working tree with a local Git revision. It never fetches, checks out files, modifies agent configuration, or invokes a model:
@@ -105,7 +166,7 @@ One hook benchmark at revision `b9880ee` on 2026-11-12 used Ubuntu 24.04.5, Pyth
 | Maximum per-invocation RSS | 16,228 KiB | 20,444 KiB |
 | Final state size | 2,252 bytes | 6,523 bytes |
 
-This single synthetic run shows lower startup/CPU cost and increased per-invocation RSS/state size. It does not establish battery savings, a stable performance guarantee, GNOME idle CPU, Shell memory, or notification latency. Repeat measurements under comparable load before deriving performance guarantees.
+This single synthetic run shows lower startup/CPU cost and increased per-invocation RSS/state size. It does not establish battery savings, a stable performance guarantee, GNOME idle CPU, Shell memory, or notification latency. Repeat measurements under comparable load before deriving performance guarantees. This benchmark predates the optional usage collector; its overhead has not been remeasured.
 
 ## Offscreen GNOME 46 resource comparison (2026-11-12)
 
