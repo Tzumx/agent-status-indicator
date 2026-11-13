@@ -95,7 +95,18 @@ install -m 0644 "$ROOT/gnome-extension/agent-status-indicator@Ruochen0513.github
 install -m 0644 "$ROOT/gnome-extension/agent-status-indicator@Ruochen0513.github.io/extension.js" "$EXTENSION_DIR/extension.js"
 install -m 0644 "$ROOT/gnome-extension/agent-status-indicator@Ruochen0513.github.io/state.js" "$EXTENSION_DIR/state.js"
 install -m 0644 "$ROOT/gnome-extension/agent-status-indicator@Ruochen0513.github.io/alerts.js" "$EXTENSION_DIR/alerts.js"
+install -m 0644 "$ROOT/gnome-extension/agent-status-indicator@Ruochen0513.github.io/io.js" "$EXTENSION_DIR/io.js"
+install -m 0644 "$ROOT/gnome-extension/agent-status-indicator@Ruochen0513.github.io/prefs.js" "$EXTENSION_DIR/prefs.js"
+install -m 0644 "$ROOT/gnome-extension/agent-status-indicator@Ruochen0513.github.io/stylesheet.css" "$EXTENSION_DIR/stylesheet.css"
 install -m 0644 "$ROOT/LICENSE" "$EXTENSION_DIR/LICENSE"
+mkdir -p "$EXTENSION_DIR/schemas"
+install -m 0644 "$ROOT/gnome-extension/agent-status-indicator@Ruochen0513.github.io/schemas/org.gnome.shell.extensions.agent-status-indicator.gschema.xml" "$EXTENSION_DIR/schemas/"
+if command -v glib-compile-schemas >/dev/null 2>&1; then
+  glib-compile-schemas "$EXTENSION_DIR/schemas"
+else
+  echo "Install glib-compile-schemas before enabling the GNOME extension preferences." >&2
+fi
+
 
 EXTENSION_DIR="$EXTENSION_DIR" EXTENSION_UUID="$EXTENSION_UUID" "${PYTHON_BIN:-python3}" - <<'PYMETA'
 import json

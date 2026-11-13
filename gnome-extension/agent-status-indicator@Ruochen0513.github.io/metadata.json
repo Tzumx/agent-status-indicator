@@ -7,5 +7,6 @@
     "50"
   ],
   "url": "https://github.com/Ruochen0513/agent-status-indicator",
-  "version-name": "1.0.0"
+  "version-name": "1.0.0",
+  "settings-schema": "org.gnome.shell.extensions.agent-status-indicator"
 }

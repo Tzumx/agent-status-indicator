@@ -10,8 +10,10 @@ from zipfile import ZipFile
 def validate(path):
     with ZipFile(path) as archive:
         names = archive.namelist()
-        expected = {'metadata.json', 'extension.js', 'state.js', 'alerts.js', 'LICENSE'}
-        if len(names) != len(set(names)) or set(names) != expected:
+        expected = {'metadata.json', 'extension.js', 'state.js', 'alerts.js', 'io.js', 'prefs.js', 'stylesheet.css', 'schemas/org.gnome.shell.extensions.agent-status-indicator.gschema.xml', 'LICENSE'}
+        files = {name for name in names if not name.endswith('/')}
+        directories = {name for name in names if name.endswith('/')}
+        if len(names) != len(set(names)) or files != expected or not directories <= {'schemas/'}:
             raise ValueError(f'Unexpected archive contents: {names}')
         for name in names:
             if PurePosixPath(name).is_absolute() or '..' in PurePosixPath(name).parts:
@@ -26,6 +28,8 @@ def validate(path):
             raise ValueError('Unexpected project URL')
         if metadata.get('shell-version') != ['46', '50']:
             raise ValueError('Only the tested GNOME Shell versions 46 and 50 may be declared')
+        if metadata.get('settings-schema') != 'org.gnome.shell.extensions.agent-status-indicator':
+            raise ValueError('Unexpected settings schema')
         if 'version' in metadata:
             raise ValueError('EGO assigns the numeric submission version')
         if not re.fullmatch(r'(?=.*[a-zA-Z0-9])[a-zA-Z0-9 .]{1,16}', metadata.get('version-name', '')):
@@ -36,7 +40,7 @@ def validate(path):
                 raise ValueError(f'Unexpected subprocess or blocking read: {pattern}')
         if 'MIT License' not in archive.read('LICENSE').decode():
             raise ValueError('Missing MIT license text')
-    print('Extension archive validated: GNOME 46 and 50, JavaScript and license only.')
+    print('Extension archive validated: GNOME 46 and 50, JavaScript, stylesheet and license only.')
 
 
 if __name__ == '__main__':

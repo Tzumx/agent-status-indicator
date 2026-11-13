@@ -1,0 +1,89 @@
+<!-- SPDX-License-Identifier: MIT -->
+<schemalist>
+  <schema id="org.gnome.shell.extensions.agent-status-indicator" path="/org/gnome/shell/extensions/agent-status-indicator/">
+    <key name="mute-all" type="b">
+      <default>false</default>
+      <summary>Mute all alerts</summary>
+    </key>
+    <key name="notify-completion" type="b">
+      <default>true</default>
+      <summary>Desktop notification for completion</summary>
+    </key>
+    <key name="sound-completion" type="b">
+      <default>true</default>
+      <summary>Play sound for completion</summary>
+    </key>
+    <key name="sound-file-completion" type="s">
+      <default>''</default>
+      <summary>Custom sound file for completion</summary>
+    </key>
+    <key name="notify-permission" type="b">
+      <default>true</default>
+      <summary>Desktop notification for permission</summary>
+    </key>
+    <key name="sound-permission" type="b">
+      <default>true</default>
+      <summary>Play sound for permission</summary>
+    </key>
+    <key name="sound-file-permission" type="s">
+      <default>''</default>
+      <summary>Custom sound file for permission</summary>
+    </key>
+    <key name="notify-decision" type="b">
+      <default>true</default>
+      <summary>Desktop notification for decision</summary>
+    </key>
+    <key name="sound-decision" type="b">
+      <default>true</default>
+      <summary>Play sound for decision</summary>
+    </key>
+    <key name="sound-file-decision" type="s">
+      <default>''</default>
+      <summary>Custom sound file for decision</summary>
+    </key>
+    <key name="notify-error" type="b">
+      <default>true</default>
+      <summary>Desktop notification for error</summary>
+    </key>
+    <key name="sound-error" type="b">
+      <default>true</default>
+      <summary>Play sound for error</summary>
+    </key>
+    <key name="sound-file-error" type="s">
+      <default>''</default>
+      <summary>Custom sound file for error</summary>
+    </key>
+    <key name="show-empty-agents" type="b">
+      <default>false</default>
+      <summary>Show empty agent groups</summary>
+    </key>
+    <key name="show-state-counts" type="b">
+      <default>true</default>
+      <summary>Show overview state counts</summary>
+    </key>
+    <key name="show-event-details" type="b">
+      <default>false</default>
+      <summary>Show session event details</summary>
+    </key>
+    <key name="show-account-usage" type="b">
+      <default>true</default>
+      <summary>Show account quota usage</summary>
+    </key>
+    <key name="show-context-usage" type="b">
+      <default>true</default>
+      <summary>Show session context usage</summary>
+    </key>
+    <key name="notify-quota-reset" type="b">
+      <default>false</default>
+      <summary>Notify when a reported quota reset time arrives</summary>
+    </key>
+    <key name="sound-quota-reset" type="b">
+      <default>false</default>
+      <summary>Play sound when a reported quota reset time arrives</summary>
+    </key>
+    <key name="sound-file-quota-reset" type="s">
+      <default>''</default>
+      <summary>Custom sound file for quota reset</summary>
+    </key>
+  </schema>
+</schemalist>

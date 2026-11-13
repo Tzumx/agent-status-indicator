@@ -6,51 +6,15 @@ import Clutter from 'gi://Clutter';
 import Pango from 'gi://Pango';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+import * as BarLevel from 'resource:///org/gnome/shell/ui/barLevel.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {ensureActorVisibleInScrollView} from 'resource:///org/gnome/shell/misc/animationUtils.js';
-import {summarize, COLORS, sessionRows, STATUS_LABELS, AGENT_LABELS, preferences, AlertCursor} from './state.js';
-import {Alerts} from './alerts.js';
+import {summarize, COLORS, sessionRows, STATUS_LABELS, AGENT_LABELS, preferences, AlertCursor, sessionSummary, sessionDetail, SUMMARY_LABELS, STATUS_ICONS, settingsPreferences, quotaWindows, quotaLabel, currentAlerts} from './state.js';
+import {Alerts, QuotaResetTimer} from './alerts.js';
+import * as LoginManager from 'resource:///org/gnome/shell/misc/loginManager.js';
+import {readJson} from './io.js';
 
-function asyncCall(object, start, finish, args) {
-    return new Promise((resolve, reject) => {
-        object[start](...args, (source, result) => {
-            try {
-                resolve(source[finish](result));
-            } catch (error) {
-                reject(error);
-            }
-        });
-    });
-}
-
-export async function readJson(file, cancellable, limit = 1048576) {
-    const stream = await asyncCall(file, 'read_async', 'read_finish', [GLib.PRIORITY_DEFAULT, cancellable]);
-    try {
-        const chunks = [];
-        let length = 0;
-        while (true) {
-            const bytes = await asyncCall(stream, 'read_bytes_async', 'read_bytes_finish',
-                [Math.min(65536, limit + 1 - length), GLib.PRIORITY_DEFAULT, cancellable]);
-            const chunk = bytes.get_data();
-            if (chunk.length === 0)
-                break;
-            length += chunk.length;
-            if (length > limit)
-                throw new Error('Status/config file exceeds size limit');
-            chunks.push(chunk);
-        }
-        const data = new Uint8Array(length);
-        let offset = 0;
-        for (const chunk of chunks) {
-            data.set(chunk, offset);
-            offset += chunk.length;
-        }
-        return JSON.parse(new TextDecoder().decode(data));
-    } finally {
-        await asyncCall(stream, 'close_async', 'close_finish', [GLib.PRIORITY_DEFAULT, null]);
-    }
-}
 
 function isMissing(error) {
     return error instanceof GLib.Error && error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND);
@@ -69,17 +33,36 @@ export default class AgentStatusExtension extends Extension {
         this._alertWarning = '';
         this._missing = true;
         this._reading = false;
-        this._savingMute = false;
         this._stateDirty = true;
         this._configDirty = true;
         this._watchDirty = false;
-        this._preferences = preferences();
+        this._legacyPreferences = {};
+        this._settings = this.getSettings();
+        this._preferences = settingsPreferences(this._settings);
+        this._settingsChangedId = this._settings.connect('changed', (_settings, key) => {
+            this._preferences = settingsPreferences(this._settings, this._legacyPreferences);
+            if (key === 'mute-all' || key.startsWith('sound-') || key.startsWith('notify-'))
+                this._alerts.cancelSound();
+            this._render();
+        });
+        this._showResetControls = false;
+        this._metrics = new Map();
         this._rowWidgets = new Map();
         this._groupWidgets = new Map();
         this._rowOrder = '';
         this._sessionPage = {claude: 0, codex: 0};
         this._cursor = new AlertCursor();
         this._alerts = new Alerts(message => this._reportError(message));
+        this._quotaTimer = new QuotaResetTimer((agent, window, notify) => {
+            if (notify)
+                this._alerts.quotaReset(agent, window, this._preferences);
+            this._render();
+        });
+        this._loginManager = LoginManager.getLoginManager();
+        this._resumeId = this._loginManager.connect('prepare-for-sleep', (_manager, sleeping) => {
+            if (!sleeping)
+                this._quotaTimer.update(this._lastState, this._preferences);
+        });
         this._cancellable = new Gio.Cancellable();
         this._stateFile = Gio.File.new_for_path(GLib.build_filenamev([
             GLib.get_user_cache_dir(), 'agent-status-indicator', 'state.json',
@@ -89,35 +72,56 @@ export default class AgentStatusExtension extends Extension {
         ]));
         this._button = new PanelMenu.Button(0.0, 'Agent Status Indicator', false);
         this._button.menu.connect('open-state-changed', (_menu, open) => {
-            if (open)
+            if (open) {
+                this._render();
                 this._constrainMenuWidth();
+            }
         });
         this._dot = new St.Icon({
             icon_name: 'media-record-symbolic', icon_size: 14,
             style_class: 'system-status-icon', y_align: Clutter.ActorAlign.CENTER,
         });
         this._button.add_child(this._dot);
-        this._summary = new PopupMenu.PopupMenuItem('Agent status', {reactive: false});
+        this._summary = new PopupMenu.PopupMenuItem('Agent status', {activate: false, hover: false, can_focus: false});
+        this._summary.remove_style_class_name('popup-inactive-menu-item');
+        this._summary.label.add_style_class_name('agent-status-heading');
         this._detail = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._detail.label.clutter_text.line_wrap = true;
+        this._detail.label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         this._sessions = new PopupMenu.PopupSubMenuMenuItem('Sessions');
         this._button.menu.addMenuItem(this._summary);
+        for (const [state, text] of Object.entries(SUMMARY_LABELS)) {
+            const item = new PopupMenu.PopupBaseMenuItem({activate: false, hover: false, can_focus: false});
+            item.remove_style_class_name('popup-inactive-menu-item');
+            const icon = new St.Icon({icon_name: STATUS_ICONS[state], style_class: 'popup-menu-icon'});
+            icon.set_style(`color: ${COLORS[state === 'decision' ? 'approval' : state]};`);
+            const label = new St.Label({text, x_expand: true});
+            const count = new St.Label({style_class: 'dim-label'});
+            item.add_child(icon);
+            item.add_child(label);
+            item.add_child(count);
+            this._metrics.set(state, {item, label, count});
+            this._button.menu.addMenuItem(item);
+        }
         this._button.menu.addMenuItem(this._detail);
         this._button.menu.addMenuItem(this._sessions);
         this._mute = this._button.menu.addAction('Mute all alerts', () => this._toggleMute());
-        this._button.menu.addAction('Refresh status', () => {
+        this._troubleshooting = new PopupMenu.PopupSubMenuMenuItem('Troubleshooting');
+        this._button.menu.addMenuItem(this._troubleshooting);
+        this._resetControls = new PopupMenu.PopupSwitchMenuItem('Show reset controls', false);
+        this._resetControls.connect('toggled', (_item, state) => {
+            this._showResetControls = state;
+            this._render();
+        });
+        this._troubleshooting.menu.addMenuItem(this._resetControls);
+        this._troubleshooting.menu.addAction('Refresh status', () => {
             this._stateDirty = true;
             this._configDirty = true;
             this._watchDirty = true;
             this._queueRefresh();
         });
-        this._button.menu.addAction('Set up agent hooks…', () => {
-            try {
-                Gio.AppInfo.launch_default_for_uri(`${this.metadata.url}#enabling-agent-hooks`, null);
-            } catch (error) {
-                this._reportError(`Cannot open setup instructions: ${error.message}`);
-            }
-        });
-        Main.panel.addToStatusArea(this.uuid, this._button, 0, 'left');
+        this._button.menu.addAction('Settings…', () => this.openPreferences());
+        Main.panel.addToStatusArea(this.uuid, this._button, 0, 'right');
         this._setupMonitors();
         this._render();
         this._refresh();
@@ -130,9 +134,20 @@ export default class AgentStatusExtension extends Extension {
         }
         this._refreshId = 0;
         this._recoveryId = 0;
+        if (this._settingsChangedId)
+            this._settings.disconnect(this._settingsChangedId);
+        this._settingsChangedId = 0;
+        this._settings = null;
+        this._legacyPreferences = null;
         this._cancellable?.cancel();
         this._cancellable = null;
         this._clearMonitors();
+        this._quotaTimer?.destroy();
+        this._quotaTimer = null;
+        if (this._resumeId)
+            this._loginManager.disconnect(this._resumeId);
+        this._resumeId = 0;
+        this._loginManager = null;
         this._alerts?.destroy();
         this._alerts = null;
         this._button?.destroy();
@@ -141,6 +156,10 @@ export default class AgentStatusExtension extends Extension {
         this._summary = null;
         this._detail = null;
         this._sessions = null;
+        this._troubleshooting = null;
+        this._resetControls = null;
+        this._showResetControls = false;
+        this._metrics.clear();
         this._rowWidgets.clear();
         this._groupWidgets.clear();
         this._mute = null;
@@ -252,13 +271,15 @@ export default class AgentStatusExtension extends Extension {
                     const config = await readJson(this._configFile, cancellable, 65536);
                     if (cancellable !== this._cancellable || cancellable.is_cancelled())
                         return;
-                    this._preferences = preferences(config);
+                    this._legacyPreferences = preferences(config);
+                    this._preferences = settingsPreferences(this._settings, this._legacyPreferences);
                     this._configError = '';
                 } catch (error) {
                     if (cancellable !== this._cancellable || cancellable.is_cancelled())
                         return;
                     if (isMissing(error)) {
-                        this._preferences = preferences();
+                        this._legacyPreferences = {};
+                        this._preferences = settingsPreferences(this._settings);
                         this._configError = '';
                     } else if (!cancellable.is_cancelled()) {
                         this._configError = 'Cannot read alert preferences; keeping previous settings.';
@@ -274,6 +295,8 @@ export default class AgentStatusExtension extends Extension {
                 try {
                     const candidate = await readJson(this._stateFile, cancellable);
                     summarize(candidate);
+                    if (candidate.sessions !== undefined && currentAlerts(candidate) === null)
+                        throw new Error('Invalid session records');
                     if (cancellable !== this._cancellable || cancellable.is_cancelled())
                         return;
                     this._lastState = candidate;
@@ -281,7 +304,7 @@ export default class AgentStatusExtension extends Extension {
                     this._stateError = '';
                     const {events, warning} = this._cursor.read(candidate);
                     this._alertWarning = warning;
-                    this._alerts.dispatch(events, this._preferences);
+                    this._alerts.dispatch(events, this._preferences, candidate);
                 } catch (error) {
                     if (cancellable !== this._cancellable || cancellable.is_cancelled())
                         return;
@@ -311,35 +334,18 @@ export default class AgentStatusExtension extends Extension {
     }
 
     async _toggleMute() {
-        if (this._savingMute)
-            return;
-        this._savingMute = true;
-        const cancellable = this._cancellable;
-        const previous = this._preferences;
-        this._preferences = {...previous, mute_all: !previous.mute_all};
-        this._alerts.cancelSound();
-        this._render();
         try {
-            try {
-                this._configFile.get_parent().make_directory_with_parents(cancellable);
-            } catch (error) {
-                if (!(error instanceof GLib.Error && error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.EXISTS)))
-                    throw error;
-            }
-            await asyncCall(this._configFile, 'replace_contents_bytes_async', 'replace_contents_finish',
-                [new GLib.Bytes(new TextEncoder().encode(JSON.stringify(this._preferences, null, 2) + '\n')),
-                    null, false, Gio.FileCreateFlags.PRIVATE, cancellable]);
+            if (!this._settings.set_boolean('mute-all', !this._preferences.mute_all))
+                throw new Error('Cannot save alert preferences.');
+            this._preferences = settingsPreferences(this._settings, this._legacyPreferences);
+            if (this._configError === 'Cannot save alert preferences.')
+                this._configError = '';
+            this._alerts.cancelSound();
+            this._render();
         } catch (error) {
-            if (cancellable === this._cancellable && !cancellable.is_cancelled()) {
-                this._preferences = previous;
-                this._configError = 'Cannot save alert preferences.';
-                this._reportError(this._configError);
-            }
-        } finally {
-            if (cancellable === this._cancellable && !cancellable.is_cancelled()) {
-                this._savingMute = false;
-                this._render();
-            }
+            this._configError = 'Cannot save alert preferences.';
+            this._reportError(error.message);
+            this._render();
         }
     }
 
@@ -357,11 +363,12 @@ export default class AgentStatusExtension extends Extension {
         const padding = actor.get_theme_node().get_length('-arrow-rise');
         const margins = actor.margin_left + actor.margin_right;
         // Keep BoxPointer's edge padding and PanelMenu's existing height limit.
-        const width = Math.max(1, Math.floor((area.width - 2 * padding - margins) / scale));
+        const width = Math.max(1, Math.min(520, Math.floor((area.width - 2 * padding - margins) / scale)));
         actor.style = `${actor.style || ''} max-width: ${width}px;`;
     }
 
     _render() {
+        this._quotaTimer?.update(this._lastState, this._preferences);
         const {status} = summarize(this._lastState);
         const rows = sessionRows(this._lastState);
         let visible = this._stateError ? 'error' : status;
@@ -369,25 +376,51 @@ export default class AgentStatusExtension extends Extension {
             visible = 'finished';
         if (visible === 'approval' && !rows.some(row => row.state === 'approval'))
             visible = 'decision';
-        const attention = rows.filter(row => ['approval', 'decision', 'error'].includes(row.state)).length;
-        const working = rows.filter(row => row.state === 'working').length;
-        const finished = rows.filter(row => row.state === 'finished').length;
-        const permission = rows.filter(row => row.state === 'approval').length;
-        const decisions = rows.filter(row => row.state === 'decision').length;
-        const errors = rows.filter(row => row.state === 'error').length;
-        const idle = rows.filter(row => row.state === 'idle').length;
+        const {counts, headline} = sessionSummary(rows);
         const description = [this._stateError,
-            this._missing ? 'No status received. Set up the companion and agent hooks.'
-                : `Needs attention: ${attention} | Working: ${working} | Finished: ${finished} | Idle: ${idle}`,
-            `Permissions: ${permission} | Decisions: ${decisions} | Errors: ${errors}`,
+            this._missing ? 'Waiting for agent status. Open Settings → Integration for setup help.' : '',
             this._configError, this._alertWarning].filter(Boolean).join('\n');
         this._dot.set_style(`color: ${COLORS[visible === 'decision' ? 'approval' : visible] || COLORS.idle};`);
-        this._button.set_accessible_name(`Agent status: ${visible}. ${description}`);
-        this._summary.label.set_text(`Agent status: ${STATUS_LABELS[visible]}`);
+        const countText = Object.entries(counts).filter(([, count]) => count > 0)
+            .map(([state, count]) => `${SUMMARY_LABELS[state]}: ${count}`).join('. ');
+        this._button.set_accessible_name(`Agent status: ${STATUS_LABELS[visible]}. ${countText}. ${description}`);
+        this._summary.label.set_text(this._stateError ? 'Status unavailable'
+            : this._missing ? 'Waiting for agent status' : headline);
         this._detail.label.set_text(description);
+        this._detail.visible = Boolean(description);
+        for (const [state, metric] of this._metrics) {
+            metric.count.set_text(String(counts[state]));
+            metric.item.visible = this._preferences.show_state_counts && counts[state] > 0;
+        }
         this._mute.label.set_text(this._preferences.mute_all ? 'Unmute alerts' : 'Mute all alerts');
         this._renderSessions(rows);
         this._button.show();
+    }
+
+    _usageWidget() {
+        const box = new St.BoxLayout({vertical: true, style_class: 'agent-status-usage', x_expand: true});
+        const title = new St.BoxLayout({style_class: 'agent-status-secondary'});
+        const label = new St.Label({x_expand: true, style_class: 'dim-label'});
+        const amount = new St.Label();
+        title.add_child(label);
+        title.add_child(amount);
+        const bar = new BarLevel.BarLevel({style_class: 'barlevel agent-status-usage-bar', x_expand: true});
+        box.add_child(title);
+        box.add_child(bar);
+        return {box, label, amount, bar};
+    }
+
+    _updateUsage(widget, value, title) {
+        widget.box.visible = Boolean(value);
+        if (!value)
+            return;
+        const percent = Math.round(value.used_percent);
+        widget.label.set_text(title);
+        widget.amount.set_text(`${percent}% used`);
+        widget.bar.value = value.used_percent / 100;
+        widget.bar.set_accessible_name(`${title}: ${percent}% used`);
+        const color = percent >= 95 ? COLORS.error : percent >= 80 ? COLORS.approval : COLORS.finished;
+        widget.bar.set_style(`-barlevel-active-background-color: ${color};`);
     }
 
     _renderSessions(rows) {
@@ -400,8 +433,12 @@ export default class AgentStatusExtension extends Extension {
             const start = this._sessionPage[agent] * 50;
             groups[agent] = sessions.slice(start, start + 50);
         }
-        const order = JSON.stringify([totals, Object.values(groups).flat().map(row => [row.agent, row.session])]);
-        const rebuilding = order !== this._rowOrder || this._groupWidgets.size === 0;
+        this._sessions.visible = rows.length > 0 || this._preferences.show_empty_agents;
+        if (!this._sessions.visible)
+            this._sessions.menu.close();
+        const order = JSON.stringify([this._preferences.show_empty_agents, totals,
+            Object.values(groups).flat().map(row => [row.agent, row.session])]);
+        const rebuilding = order !== this._rowOrder;
         if (rebuilding) {
             this._sessions.menu.removeAll();
             this._rowWidgets.clear();
@@ -409,15 +446,37 @@ export default class AgentStatusExtension extends Extension {
             this._rowOrder = order;
         }
         for (const agent of ['claude', 'codex']) {
+            if (groups[agent].length === 0 && !this._preferences.show_empty_agents)
+                continue;
             let group = this._groupWidgets.get(agent);
             if (!group) {
                 // GNOME permits one open submenu per top-level menu. Keep
                 // agent groups and session controls inside that single submenu.
                 group = new PopupMenu.PopupMenuSection();
-                group.addMenuItem(new PopupMenu.PopupMenuItem(AGENT_LABELS[agent], {reactive: false}));
+                const heading = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+                const content = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'agent-status-group'});
+                content.add_child(new St.Label({text: AGENT_LABELS[agent], style_class: 'agent-status-heading'}));
+                group.usage = [];
+                for (let index = 0; index < 2; index++) {
+                    const widget = this._usageWidget();
+                    content.add_child(widget.box);
+                    group.usage.push(widget);
+                }
+                group.reported = new St.Label({style_class: 'dim-label agent-status-usage-time'});
+                content.add_child(group.reported);
+                heading.add_child(content);
+                group.addMenuItem(heading);
                 this._groupWidgets.set(agent, group);
                 this._sessions.menu.addMenuItem(group);
             }
+            const windows = this._preferences.show_account_usage ? quotaWindows(this._lastState, agent) : [];
+            for (const [index, widget] of group.usage.entries()) {
+                const window = windows[index];
+                this._updateUsage(widget, window, window ? `${quotaLabel(window.window_minutes)} quota` : '');
+            }
+            group.reported.visible = windows.length > 0;
+            if (windows.length)
+                group.reported.set_text('Reported ' + sessionDetail({updatedAt: this._lastState.usage[agent].updated_at}));
             const sessions = groups[agent];
             if (rebuilding && sessions.length === 0)
                 group.addMenuItem(new PopupMenu.PopupMenuItem('No sessions', {reactive: false}));
@@ -449,13 +508,27 @@ export default class AgentStatusExtension extends Extension {
                 if (!widget) {
                     const item = new PopupMenu.PopupBaseMenuItem({activate: false, hover: false, can_focus: false});
                     item.remove_style_class_name('popup-inactive-menu-item');
+                    item.connect('key-focus-in', () =>
+                        ensureActorVisibleInScrollView(this._sessions.menu.actor, item));
                     const labels = new St.BoxLayout({vertical: true, x_expand: true});
-                    const label = new St.Label({x_expand: true});
-                    // Keep the session ID and state visible when a project name is long.
-                    label.clutter_text.ellipsize = Pango.EllipsizeMode.START;
+                    const title = new St.BoxLayout({style_class: 'agent-status-session-title'});
+                    const label = new St.Label({x_expand: true, style_class: 'agent-status-project'});
+                    label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+                    const status = new St.Label({style_class: 'agent-status-state'});
+                    status.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+                    title.add_child(label);
+                    title.add_child(status);
+                    const secondary = new St.BoxLayout({style_class: 'agent-status-secondary'});
+                    const identity = new St.Label({style_class: 'dim-label'});
+                    identity.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
                     const detail = new St.Label({style_class: 'dim-label', x_expand: true});
-                    labels.add_child(label);
-                    labels.add_child(detail);
+                    detail.clutter_text.ellipsize = Pango.EllipsizeMode.MIDDLE;
+                    secondary.add_child(identity);
+                    secondary.add_child(detail);
+                    labels.add_child(title);
+                    labels.add_child(secondary);
+                    const context = this._usageWidget();
+                    labels.add_child(context.box);
                     item.add_child(labels);
                     const reset = new St.Button({
                         label: 'Copy reset command', style_class: 'button',
@@ -468,15 +541,25 @@ export default class AgentStatusExtension extends Extension {
                         const command = `agent-status update ${row.agent} idle --session ${GLib.shell_quote(row.session)}`;
                         St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, command);
                         this._detail.label.set_text('Reset command copied. Review and run it in a terminal.');
+                        this._detail.visible = true;
                     });
-                    widget = {item, label, detail, reset};
+                    widget = {item, label, status, identity, detail, reset, context};
                     this._rowWidgets.set(key, widget);
                     group.addMenuItem(item);
                 }
-                widget.label.set_text(`${row.project} [${row.short}] · ${STATUS_LABELS[row.state]}`);
-                const time = row.updatedAt > 0 && row.updatedAt < 8640000000000
-                    ? new Date(row.updatedAt * 1000).toLocaleString() : 'Time unavailable';
-                widget.detail.set_text(`${row.event || 'Last event unavailable'} · ${time}`);
+                widget.item.can_focus = !this._showResetControls;
+                const detail = sessionDetail(row, this._preferences.show_event_details);
+                this._updateUsage(widget.context, this._preferences.show_context_usage ? row.context : null, 'Context ≈');
+                const contextDetail = this._preferences.show_context_usage && row.context
+                    ? ` Context approximately ${Math.round(row.context.used_percent)}% used; reported ${sessionDetail({updatedAt: row.context.updated_at})}.` : '';
+                widget.item.set_accessible_name(
+                    `${AGENT_LABELS[row.agent]}: ${row.project} · ${STATUS_LABELS[row.state]}. Session ${row.short}. ${detail}${contextDetail}`);
+                widget.reset.visible = this._showResetControls;
+                widget.label.set_text(row.project);
+                widget.status.set_text(STATUS_LABELS[row.state]);
+                widget.status.set_style(`color: ${COLORS[row.state === 'decision' ? 'approval' : row.state]};`);
+                widget.identity.set_text('#' + row.short);
+                widget.detail.set_text(detail);
                 widget.reset.set_accessible_name(`Copy reset command for ${row.project} [${row.short}]`);
             }
         }

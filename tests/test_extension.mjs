@@ -23,6 +23,27 @@ let monitorFailure = false;
 const failedMonitorPaths = new Set();
 let notificationFailure = false;
 let audioFailure = false;
+const settingsValues = new Map();
+const settingsSignals = new Map();
+let settingsSignalId = 0;
+const settings = {
+    get_user_value: key => settingsValues.has(key) ? {} : null,
+    get_boolean: key => settingsValues.get(key),
+    get_string: key => settingsValues.get(key),
+    set_boolean(key, value) {
+        settingsValues.set(key, value);
+        for (const callback of settingsSignals.values()) callback(this, key);
+        return true;
+    },
+    set_string(key, value) { return this.set_boolean(key, value); },
+    reset(key) {
+        settingsValues.delete(key);
+        for (const callback of settingsSignals.values()) callback(this, key);
+    },
+    connect(_signal, callback) { settingsSignals.set(++settingsSignalId, callback); return settingsSignalId; },
+    disconnect(id) { settingsSignals.delete(id); },
+};
+let preferencesOpened = 0;
 let clipboard = '';
 const scrollRequests = [];
 const menuGeometry = {width: 1024, scale: 1, padding: 6, monitor: 1, margin: 0};
@@ -89,17 +110,7 @@ function file(path) {
             return stream;
         },
         make_directory_with_parents() { directories.add(path); },
-        replace_contents_bytes_async(bytes, _etag, _backup, flags, cancellable, callback) {
-            assert.equal(flags, 4, 'preferences must be private');
-            queueMicrotask(() => {
-                if (!cancellable.is_cancelled()) {
-                    files.set(path, new TextDecoder().decode(bytes.data));
-                    emit(path);
-                }
-                callback(this, {cancellable});
-            });
-        },
-        replace_contents_finish(result) { checkCancelled(result.cancellable); return [true, 'etag']; },
+
     };
 }
 function completeRead(index = 0) {
@@ -142,7 +153,12 @@ async function updateState(value) {
     await settle();
 }
 class MenuItem {
-    constructor(text) { this.label = {set_text: value => { this.text = value; }}; this.text = text; }
+    constructor(text) {
+        this.label = new Label({text});
+        this.label.set_text = value => { this.text = value; this.label.text = value; };
+        this.text = text;
+    }
+    remove_style_class_name(value) { this.removedStyle = value; }
 }
 class Menu {
     constructor() {
@@ -194,6 +210,8 @@ class Actor {
     constructor(props = {}) { Object.assign(this, props); this.children = []; this.signals = new Map(); }
     add_child(child) { this.children.push(child); }
     remove_style_class_name(value) { this.removedStyle = value; }
+    add_style_class_name(value) { this.addedStyle = value; }
+    set_style(value) { this.style = value; }
     connect(name, callback) { this.signals.set(name, callback); }
     set_accessible_name(value) { this.accessible = value; }
 }
@@ -208,6 +226,10 @@ class ActionButton extends Actor {
 class Section extends Menu {}
 class SubMenu extends MenuItem {
     constructor(text) { super(text); this.menu = new Menu(); }
+}
+class SwitchMenuItem extends Actor {
+    constructor(text, state) { super(); this.text = text; this.state = state; }
+    toggle() { this.state = !this.state; this.signals.get('toggled')?.(this, this.state); }
 }
 class Button {
     constructor() {
@@ -226,18 +248,38 @@ class Icon {
     constructor(props) { Object.assign(this, props); }
     set_style(value) { this.style = value; }
 }
+class Notification {
+    constructor(props) { Object.assign(this, props); this.signals = []; }
+    connect(_signal, callback) { this.signals.push(callback); }
+    destroy(reason) {
+        if (this.destroyed) return;
+        this.destroyed = true;
+        this.reason = reason;
+        for (const callback of this.signals) callback(this, reason);
+    }
+}
 class Source {
     constructor(props) { Object.assign(this, props); this.notifications = []; sources.push(this); }
     connect(_signal, callback) { this.onDestroy = callback; }
     addNotification(notification) {
         if (notificationFailure)
             throw Error('notifications unavailable');
+        notification.connect('destroy', () => {
+            this.notifications = this.notifications.filter(item => item !== notification);
+            if (!this.notifications.length && !this.destroyed) this.destroy();
+        });
         this.notifications.push(notification);
         if (this.notifications.length > 3)
-            this.notifications.shift();
+            this.notifications[0].destroy();
     }
-    destroy() { this.destroyed = true; this.notifications = []; this.onDestroy?.(); }
+    destroy() {
+        if (this.destroyed) return;
+        this.destroyed = true;
+        for (const notification of [...this.notifications]) notification.destroy();
+        this.onDestroy?.();
+    }
 }
+
 const context = vm.createContext({
     TextDecoder, TextEncoder, Uint8Array, console: {error(message) { loggedErrors.push(message); }},
     global: {stage: {}, display: {get_sound_player() {
@@ -252,7 +294,7 @@ const context = vm.createContext({
 const model = new vm.SourceTextModule(fs.readFileSync(new URL('state.js', base), 'utf8'), {context});
 await model.link(() => { throw Error('unexpected import'); });
 await model.evaluate();
-const {summarize, sessionRows, AlertCursor, preferences} = model.namespace;
+const {summarize, sessionRows, sessionSummary, sessionDetail, COLORS, AlertCursor, preferences} = model.namespace;
 for (const state of ['working', 'approval', 'error']) {
     const result = summarize({ttl_seconds: 1, sessions: {codex: {s: {state, updated_at: 1}}}});
     assert.equal(result.status, state);
@@ -280,9 +322,15 @@ for (const invalid of [null, [], false, 1, 'invalid', {mute_all: 'true'},
     {notifications: []}, {sounds: null}, {sounds: {error: 'false'}}, {sound_files: {error: 42}}])
     assert.throws(() => preferences(invalid));
 function log(sequence, events = [], generation = 'one') {
-    return {alerts: {generation, sequence, events}};
+    const sessions = {claude: {}, codex: {}};
+    for (const event of events) {
+        const state = {completion: 'idle', permission: 'approval', decision: 'approval', error: 'error'}[event.kind];
+        sessions[event.agent][event.session] = {state, event: event.kind === 'completion' ? 'Stop' : '',
+            attention: event.kind === 'decision' ? 'decision' : ''};
+    }
+    return {alerts: {generation, sequence, events}, sessions};
 }
-function event(sequence, kind = 'completion', session = 'codex:s') {
+function event(sequence, kind = 'completion', session = 's') {
     return {sequence, kind, session, agent: 'codex', project: 'demo'};
 }
 const cursor = new AlertCursor();
@@ -307,8 +355,8 @@ const imports = {
         Bytes: class { constructor(data) { this.data = data; } },
     }},
     'gi://Gio': {default: {
-        Cancellable, IOErrorEnum: {NOT_FOUND: 1, EXISTS: 3}, FileMonitorFlags: {WATCH_MOVES: 1},
-        FileCreateFlags: {PRIVATE: 4}, File: {new_for_path: file},
+        Cancellable, IOErrorEnum: {NOT_FOUND: 1, EXISTS: 3, WRONG_ETAG: 4}, FileMonitorFlags: {WATCH_MOVES: 1},
+        FileCreateFlags: {PRIVATE: 4}, FileCopyFlags: {NONE: 0}, File: {new_for_path: file},
         AppInfo: {launch_default_for_uri: url => openedUrls.push(url)},
     }},
     'gi://St': {default: {
@@ -317,10 +365,10 @@ const imports = {
         Clipboard: {get_default: () => ({set_text: (_type, text) => { clipboard = text; }})},
     }},
     'gi://Clutter': {default: {ActorAlign: {CENTER: 1}}},
-    'gi://Pango': {default: {EllipsizeMode: {START: 1}}},
+    'gi://Pango': {default: {EllipsizeMode: {START: 1, END: 2, MIDDLE: 3, NONE: 0}}},
     'resource:///org/gnome/shell/ui/main.js': {
         panel: {addToStatusArea(id, button, position, side) {
-            assert.equal(side, 'left'); assert.equal(position, 0);
+            assert.equal(side, 'right'); assert.equal(position, 0);
             assert(!registrations.has(id)); registrations.set(id, button);
         }},
         layoutManager: {
@@ -336,23 +384,30 @@ const imports = {
         ensureActorVisibleInScrollView: (view, actor) => scrollRequests.push([view, actor]),
     },
     'resource:///org/gnome/shell/ui/messageTray.js': {
-        Source, Notification: class { constructor(props) { Object.assign(this, props); } },
+        Source, Notification, NotificationDestroyedReason: {EXPIRED: 1, DISMISSED: 2, REPLACED: 4},
         Urgency: {NORMAL: 1, HIGH: 2},
     },
     'resource:///org/gnome/shell/ui/panelMenu.js': {Button},
+    'resource:///org/gnome/shell/ui/barLevel.js': {BarLevel: Actor},
+    'resource:///org/gnome/shell/misc/loginManager.js': {
+        getLoginManager: () => ({connect() { return 1; }, disconnect() {}}),
+    },
     'resource:///org/gnome/shell/ui/popupMenu.js': {
         PopupMenuItem: MenuItem, PopupSubMenuMenuItem: SubMenu,
-        PopupBaseMenuItem: Actor, PopupMenuSection: Section,
+        PopupBaseMenuItem: Actor, PopupMenuSection: Section, PopupSwitchMenuItem: SwitchMenuItem,
     },
     'resource:///org/gnome/shell/extensions/extension.js': {
-        Extension: class {uuid = 'test-extension'; metadata = {url: 'https://github.com/Ruochen0513/agent-status-indicator'};},
+        Extension: class {getSettings() { return settings; } openPreferences() { preferencesOpened++; } uuid = 'test-extension'; metadata = {url: 'https://github.com/Ruochen0513/agent-status-indicator'};},
     },
 };
+const ioModule = new vm.SourceTextModule(fs.readFileSync(new URL('io.js', base), 'utf8'), {context});
 const alertsModule = new vm.SourceTextModule(fs.readFileSync(new URL('alerts.js', base), 'utf8'), {context});
 const extension = new vm.SourceTextModule(fs.readFileSync(new URL('extension.js', base), 'utf8'), {context});
 async function link(specifier) {
     if (specifier === './state.js')
         return model;
+    if (specifier === './io.js')
+        return ioModule;
     if (specifier === './alerts.js')
         return alertsModule;
     const values = imports[specifier];
@@ -365,6 +420,8 @@ async function link(specifier) {
     await module.evaluate();
     return module;
 }
+await ioModule.link(link);
+await ioModule.evaluate();
 await alertsModule.link(link);
 await alertsModule.evaluate();
 await extension.link(link);
@@ -387,8 +444,26 @@ assert.match(instance._dot.style, /#2ea043/);
 assert.equal(sources.length, 0, 'no notification at startup');
 assert.equal(timers.size, 0, 'no periodic refresh source');
 assert(monitors.some(monitor => !monitor.cancelled && monitor.path === '/config'));
-instance._button.menu.actions.find(action => /Set up/.test(action.text)).callback();
-assert.match(openedUrls.at(-1), /#enabling-agent-hooks$/);
+assert.deepEqual(instance._button.menu.actions.map(action => action.text), ['Mute all alerts', 'Settings…']);
+instance._button.menu.actions.find(action => action.text === 'Settings…').callback();
+assert.equal(preferencesOpened, 1, 'Settings opens the native preferences window');
+assert(!instance._troubleshooting.menu.actions.some(action => /hook/i.test(action.text)), 'setup help belongs in preferences');
+assert.equal(instance._summary.text, '1 session');
+assert.equal(instance._groupWidgets.has('claude'), false, 'unused agent group is absent');
+settings.set_boolean('show-state-counts', false);
+assert.equal(instance._metrics.get('working').item.visible, false);
+settings.reset('show-state-counts');
+assert.equal(sessionDetail({event: 'UserPromptSubmit', updatedAt: 0}), 'Time unavailable', 'event details are optional');
+assert.equal(instance._metrics.get('working').count.text, '1');
+assert.equal(instance._metrics.get('working').item.visible, true);
+assert.equal(instance._metrics.get('error').item.visible, false);
+assert.equal(instance._detail.visible, false, 'normal operation has no diagnostic block');
+const validBeforeMalformed = instance._lastState;
+await updateState({...validBeforeMalformed, sessions: {codex: {s: {state: ['working']}}}});
+assert.equal(instance._lastState, validBeforeMalformed, 'malformed session records retain the last valid menu state');
+assert.match(instance._stateError, /keeping last valid/);
+await updateState(validBeforeMalformed);
+assert.equal(instance._stateError, '');
 const count = reads.get(statePath);
 emit('/cache/agent-status-indicator/state.lock');
 emit('/cache/agent-status-indicator/state.tmp');
@@ -400,32 +475,56 @@ assert.equal(timers.size, 1, 'debounce atomic rename bursts');
 runTimers(100);
 await settle();
 assert.equal(reads.get(statePath), count + 1);
-assert.equal(sources[0].notifications[0].body, 'Finished responding', 'history retains intermediate completion');
+assert.equal(sources.length, 0, 'a completion already superseded by resumed work is not announced');
 await updateState({...log(2, [event(2)]), sessions: {codex: {s: {state: 'working'}}}});
-assert.equal(sources[0].notifications.length, 1);
+assert.equal(sources.length, 0, 'repeated reads cannot replay the obsolete completion');
 runTimers(1000);
-assert.equal(sounds.at(-1), 'complete');
+assert.equal(sounds.at(-1), '/tmp/error.wav', 'obsolete completion does not queue a sound');
 await updateState({...log(2, [event(2)]), sessions: {codex: {s: {state: 'idle', event: 'Stop'}}}});
-assert.match(instance._summary.text, /Finished responding/);
+assert.match(instance._summary.text, /1 session/);
+assert.match(instance._dot.style, /#62a0ea/, 'finished responses use blue');
+for (const [status, eventName, attention, color] of [
+    ['working', 'UserPromptSubmit', '', COLORS.working], ['approval', 'PermissionRequest', '', COLORS.approval],
+    ['approval', 'PreToolUse', 'decision', COLORS.approval], ['error', 'Error', '', COLORS.error],
+    ['idle', 'Stop', '', COLORS.finished], ['idle', 'SessionStart', '', COLORS.idle],
+]) {
+    const previousState = instance._lastState;
+    instance._lastState = {sessions: {codex: {s: {state: status, event: eventName, attention}}}};
+    instance._render();
+    assert.equal(instance._dot.style, 'color: ' + color + ';');
+    instance._lastState = previousState;
+}
+settings.set_boolean('sound-error', false);
+settings.set_string('sound-file-completion', '/tmp/custom.ogg');
+const overrides = model.namespace.settingsPreferences(settings, {sounds: {error: true, permission: false}});
+assert.equal(overrides.sounds.error, false, 'explicit native settings override legacy values');
+assert.equal(overrides.sounds.permission, false, 'unmodified settings retain legacy values');
+assert.equal(overrides.sound_files.completion, '/tmp/custom.ogg');
+settings.reset('sound-error');
+settings.reset('sound-file-completion');
+assert.equal(sessionSummary([]).headline, 'No sessions');
+assert.equal(sessionSummary([{state: 'error'}, {state: 'decision'}, {state: 'working'}]).headline, '3 sessions');
+assert.match(sessionDetail({short: '12345678', event: 'PostToolUseFailure', updatedAt: 0}, true), /Tool failed · Time unavailable/);
+assert(!sessionDetail({short: '12345678', event: 'InternalPayload', updatedAt: 0}).includes('InternalPayload'));
 const burst = Array.from({length: 10}, (_unused, index) => event(index + 3, 'error', 'session-' + index));
 await updateState({...log(12, burst), sessions: {codex: Object.fromEntries(
     burst.map(item => [item.session, {state: 'error', project: 'same'}]))}});
-assert.equal(sources.filter(source => !source.destroyed).length, 11, 'separate sources preserve ten-session bursts');
+assert.equal(sources.filter(source => !source.destroyed).length, 10, 'separate sources preserve ten-session bursts');
 assert.equal([...timers.values()].filter(timer => timer.delay === 1000).length, 1);
 runTimers(1000);
 assert.equal(sounds.at(-1), 'dialog-error');
 instance._button.menu.open();
 assert.match(instance._button.menu.actor.style, /max-height: 700px;/, 'preserve native height constraints');
-assert.match(instance._button.menu.actor.style, /max-width: 1012px;/, 'keep the menu within its monitor and arrow gaps');
+assert.match(instance._button.menu.actor.style, /max-width: 520px;/, 'keep the menu within its monitor and arrow gaps');
 instance._button.menu.close();
 Object.assign(menuGeometry, {width: 1920, scale: 2, padding: 12, monitor: 2, margin: 4});
 instance._button.menu.open();
-assert.match(instance._button.menu.actor.style, /max-width: 944px;/, 'convert physical work area and margins to CSS pixels');
+assert.match(instance._button.menu.actor.style, /max-width: 520px;/, 'convert physical work area and margins to CSS pixels');
 assert.equal((instance._button.menu.actor.style.match(/max-width:/g) || []).length, 1, 'reopening does not accumulate width rules');
 instance._button.menu.close();
-Object.assign(menuGeometry, {width: 800, scale: 1, padding: 6, monitor: 1, margin: 0});
+Object.assign(menuGeometry, {width: 400, scale: 1, padding: 6, monitor: 1, margin: 0});
 instance._button.menu.open();
-assert.match(instance._button.menu.actor.style, /max-width: 788px;/, 'recompute width after moving to a smaller monitor');
+assert.match(instance._button.menu.actor.style, /max-width: 388px;/, 'recompute width after moving to a smaller monitor');
 instance._sessions.menu.open();
 const codexGroup = instance._groupWidgets.get('codex');
 assert(codexGroup instanceof Section, 'agent groups must not open a second native submenu');
@@ -437,6 +536,20 @@ await updateState({...log(12, burst), sessions: {codex: Object.fromEntries(
 assert.equal(instance._groupWidgets.get('codex').items[1], preservedRow, 'ordinary events preserve open menu actors');
 assert.equal(instance._sessions.menu.isOpen, true, 'session updates keep the native submenu open');
 const firstWidget = [...instance._rowWidgets.values()].find(widget => widget.item === preservedRow);
+assert.equal(firstWidget.reset.visible, false, 'reset buttons are hidden during normal use');
+assert.equal(firstWidget.item.can_focus, true, 'normal session rows remain keyboard-focusable');
+assert.match(firstWidget.item.accessible, /Codex: same.*Error/);
+firstWidget.item.signals.get('key-focus-in')();
+assert.deepEqual(scrollRequests.at(-1), [instance._sessions.menu.actor, firstWidget.item], 'keyboard focus reveals normal session rows');
+const beforeRecovery = {state: files.get(statePath), config: files.get(configPath),
+    reads: reads.get(statePath), notifications: sources.reduce((total, source) => total + source.notifications.length, 0)};
+instance._troubleshooting.menu.open();
+assert.equal(instance._sessions.menu.isOpen, false, 'troubleshooting is a sibling submenu');
+instance._resetControls.toggle();
+assert.equal(firstWidget.reset.visible, true);
+assert.equal(firstWidget.item.can_focus, false, 'recovery rows have one focusable reset button');
+instance._sessions.menu.open();
+assert.equal(instance._troubleshooting.menu.isOpen, false);
 assert.match(firstWidget.reset.accessible, /Copy reset command for same/);
 firstWidget.reset.focus();
 assert.deepEqual(scrollRequests.at(-1), [instance._sessions.menu.actor, firstWidget.item], 'keyboard focus reveals the whole session row');
@@ -444,6 +557,15 @@ firstWidget.reset.click();
 assert.equal(instance._sessions.menu.isOpen, true, 'copying a command does not close the session list');
 assert.match(clipboard, /^agent-status update codex idle --session '/);
 assert.match(instance._detail.text, /Review and run/);
+instance._troubleshooting.menu.open();
+instance._resetControls.toggle();
+instance._sessions.menu.open();
+assert.equal(firstWidget.reset.visible, false, 'turning recovery off hides the reset buttons again');
+assert.equal(firstWidget.item.can_focus, true);
+assert.equal(files.get(statePath), beforeRecovery.state, 'recovery controls never change session state');
+assert.equal(files.get(configPath), beforeRecovery.config, 'recovery visibility is temporary');
+assert.equal(reads.get(statePath), beforeRecovery.reads, 'showing controls does not reread state');
+assert.equal(sources.reduce((total, source) => total + source.notifications.length, 0), beforeRecovery.notifications);
 await updateState({...log(12, burst), sessions: {codex: Object.fromEntries(
     Array.from({length: 150}, (_unused, index) => ['page-' + index, {state: 'working'}]))}});
 assert.equal(instance._rowWidgets.size, 50, 'large files cannot allocate unbounded menu actors');
@@ -490,13 +612,21 @@ emit(statePath);
 runTimers(100);
 await settle();
 assert.equal(instance._preferences.mute_all, true);
-assert.equal(sources.reduce((total, source) => total + source.notifications.length, 0), notificationsBeforeMute);
+assert.equal(notificationsBeforeMute, 1);
+assert.equal(sources.reduce((total, source) => total + source.notifications.length, 0), 0, 'mute still removes the superseded completion notice');
 assert(![...timers.values()].some(timer => timer.delay === 1000), 'mute cancels queued sound');
-await instance._toggleMute();
+const muteChange = instance._toggleMute();
 await settle();
+await muteChange;
 runTimers(100);
 await settle();
-assert.equal(JSON.parse(files.get(configPath)).mute_all, false);
+assert.equal(settings.get_boolean('mute-all'), false);
+assert.equal(JSON.parse(files.get(configPath)).mute_all, true, 'native settings leave the legacy file unchanged');
+settings.reset('mute-all');
+files.set(configPath, JSON.stringify({mute_all: false}));
+emit(configPath);
+runTimers(100);
+await settle();
 files.set(configPath, '{broken');
 emit(configPath);
 runTimers(100);
@@ -533,7 +663,7 @@ files.delete(statePath);
 emit(statePath);
 runTimers(100);
 await settle();
-assert.match(instance._detail.text, /Set up the companion/);
+assert.match(instance._detail.text, /Settings → Integration/);
 directories.delete('/cache/agent-status-indicator');
 emit('/cache/agent-status-indicator');
 runTimers(100);
@@ -560,6 +690,7 @@ assert.equal(pendingReads.length, 1);
 instance.disable();
 assert(oldCancellable.is_cancelled());
 assert.equal(registrations.size, 0);
+assert.equal(settingsSignals.size, 0, 'disable disconnects native settings callbacks');
 assert(monitors.every(monitor => monitor.cancelled));
 assert.equal(timers.size, 0);
 instance.enable();
@@ -610,4 +741,243 @@ for (const path of ['/cache/agent-status-indicator', '/cache', '/config/agent-st
     instance.disable();
     assert.equal(timers.size, 0);
 }
+// Remove only notices superseded by authoritative state from their own session.
+const unrelatedSource = new Source({title: 'Another extension'});
+const unrelatedNotice = new Notification({source: unrelatedSource});
+unrelatedSource.addNotification(unrelatedNotice);
+const lifecycle = new alertsModule.namespace.Alerts(message => loggedErrors.push(message));
+const liveConfig = preferences();
+const permission = {...event(1, 'permission', 'same'), agent: 'codex'};
+const failure = {...event(2, 'error', 'same'), agent: 'claude'};
+let live = {alerts: {generation: 'lifecycle', sequence: 2, events: [permission, failure]}, sessions: {
+    codex: {same: {state: 'approval', turn_id: 'one', updated_at: 1}},
+    claude: {same: {state: 'error', turn_id: 'one', updated_at: 1}},
+}};
+lifecycle.dispatch([permission, failure], liveConfig, live);
+const firstPermission = lifecycle._notices.get(JSON.stringify(['codex', 'same'])).notification;
+const firstError = lifecycle._notices.get(JSON.stringify(['claude', 'same'])).notification;
+lifecycle.dispatch([], liveConfig, {...live, alerts: {generation: {}, events: []}});
+assert(!firstPermission.destroyed && !firstError.destroyed, 'invalid history does not invent a resolution');
+lifecycle.dispatch([], liveConfig, {...live, sessions: {codex: [], claude: live.sessions.claude}});
+lifecycle.dispatch([], liveConfig, {...live, sessions: {codex: {same: {state: 'invalid'}}}});
+lifecycle.dispatch([], liveConfig, {});
+assert(!firstPermission.destroyed && !firstError.destroyed, 'malformed or missing session data cannot establish resolution');
+for (const invalid of [['working'], {toString: 'error'}, null, true]) {
+    const malformed = {...live, sessions: {codex: {same: {state: invalid}}, claude: live.sessions.claude}};
+    assert.doesNotThrow(() => lifecycle.dispatch([], liveConfig, malformed));
+    assert(!firstPermission.destroyed && !firstError.destroyed,
+        'invalid state types cannot establish that a request resolved');
+    assert.equal(sessionRows(malformed).length, 1, 'invalid state types are omitted from presentation');
+}
+lifecycle.dispatch([], liveConfig, live);
+assert(!firstPermission.destroyed && !firstError.destroyed, 'age and repeated reads do not expire valid notices');
+live.sessions.codex.same = {state: 'working', turn_id: 'one'};
+lifecycle.dispatch([], liveConfig, live);
+assert(firstPermission.destroyed, 'resuming removes that session permission notice');
+assert(!firstError.destroyed, 'same ID in another agent remains independent');
+live.sessions.claude.same = {state: 'working', turn_id: 'one'};
+const soundsBeforeResolution = sounds.length;
+lifecycle.dispatch([], liveConfig, live);
+runTimers(1000);
+assert(firstError.destroyed);
+assert.equal(sounds.length, soundsBeforeResolution, 'resolved queued sound is cancelled');
+const completion = {...event(3, 'completion', 'same'), agent: 'codex'};
+live.alerts.sequence = 3;
+live.alerts.events.push(completion);
+live.sessions.codex.same = {state: 'idle', event: 'Stop', turn_id: 'one'};
+lifecycle.dispatch([completion], liveConfig, live);
+const finished = lifecycle._notices.get(JSON.stringify(['codex', 'same'])).notification;
+live.sessions.codex.same = {state: 'working', turn_id: 'two'};
+lifecycle.dispatch([], liveConfig, live);
+assert(finished.destroyed, 'the next turn removes the previous completion notice');
+const nextPermission = {...permission, sequence: 4};
+live.alerts.sequence = 4;
+live.alerts.events.push(nextPermission);
+live.sessions.codex.same = {state: 'approval', turn_id: 'two'};
+lifecycle.dispatch([nextPermission], liveConfig, live);
+const currentPermission = lifecycle._notices.get(JSON.stringify(['codex', 'same'])).notification;
+lifecycle.dispatch([permission, completion], liveConfig, live);
+assert(!currentPermission.destroyed, 'late old events cannot clear a newer permission notice');
+assert.equal(lifecycle._notices.size, 1);
+const nextCompletion = {...completion, sequence: 5};
+live.alerts.sequence = 5;
+live.alerts.events.push(nextCompletion);
+live.sessions.codex.same = {state: 'idle', event: 'Stop', turn_id: 'two'};
+lifecycle.dispatch([nextCompletion], preferences({mute_all: true}), live);
+assert(currentPermission.destroyed, 'mute does not prevent cleanup of resolved notices');
+assert.equal(lifecycle._notices.size, 0, 'mute suppresses replacement notices');
+const decision = {...event(6, 'decision', 'same'), agent: 'claude'};
+live.alerts.sequence = 6;
+live.alerts.events.push(decision);
+live.sessions.claude.same = {state: 'approval', attention: 'decision', turn_id: 'three'};
+lifecycle.dispatch([decision], liveConfig, live);
+const decisionNotice = lifecycle._notices.get(JSON.stringify(['claude', 'same'])).notification;
+live.sessions.claude.same = {state: 'idle', event: 'Reset', turn_id: 'three'};
+lifecycle.dispatch([], liveConfig, live);
+assert(decisionNotice.destroyed, 'a manual reset resolves the decision notice');
+live.sessions.claude.same = {state: 'approval', attention: 'decision', turn_id: 'four'};
+live.alerts.sequence = 7;
+const laterDecision = {...decision, sequence: 7};
+live.alerts.events.push(laterDecision);
+lifecycle.dispatch([laterDecision], liveConfig, live);
+const removedSession = lifecycle._notices.get(JSON.stringify(['claude', 'same'])).notification;
+delete live.sessions.claude.same;
+lifecycle.dispatch([], liveConfig, live);
+assert(removedSession.destroyed, 'removing a session clears its notice');
+assert.equal(lifecycle._notices.size, 0);
+assert.equal(lifecycle._sources.size, 0, 'empty sources are released');
+live.sessions.claude.same = {state: 'approval', attention: 'decision', turn_id: 'five'};
+const dismissible = {...decision, sequence: 8};
+live.alerts.sequence = 8;
+live.alerts.events.push(dismissible);
+lifecycle.dispatch([dismissible], liveConfig, live);
+const dismissed = lifecycle._notices.get(JSON.stringify(['claude', 'same'])).notification;
+dismissed.destroy(2);
+lifecycle.dispatch([], liveConfig, live);
+assert.equal(lifecycle._notices.size, 0, 'a manually dismissed notice is not recreated by rereading state');
+const renewedError = {...failure, sequence: 9};
+live.alerts.sequence = 9;
+live.alerts.events.push(renewedError);
+live.sessions.claude.same = {state: 'error', turn_id: 'six'};
+lifecycle.dispatch([renewedError], liveConfig, live);
+const earlierError = lifecycle._notices.get(JSON.stringify(['claude', 'same'])).notification;
+const newerError = {...renewedError, sequence: 10};
+live.alerts.sequence = 10;
+live.alerts.events.push(newerError);
+lifecycle.dispatch([newerError], liveConfig, live);
+assert(earlierError.destroyed, 'a newer failure supersedes the previous notice from that session');
+assert.equal(lifecycle._notices.size, 1);
+assert.equal([...lifecycle._sources.values()][0].notifications.length, 1);
+live.alerts = {generation: 'replacement-history', sequence: 0, events: []};
+lifecycle.dispatch([], liveConfig, live);
+assert.equal(lifecycle._notices.size, 1, 'history reset alone does not resolve an active error');
+live.sessions.claude.same = {state: 'working', turn_id: 'six'};
+lifecycle.dispatch([], liveConfig, live);
+assert.equal(lifecycle._notices.size, 0, 'a real recovery clears the error after history reset');
+assert(!unrelatedNotice.destroyed, 'another extension notification stays untouched');
+unrelatedSource.destroy();
+lifecycle.destroy();
+// Display settings are independent of lifecycle and notifications.
+instance.enable();
+await settle();
+instance._lastState = {sessions: {codex: {}, claude: {}}};
+instance._render();
+assert.equal(instance._sessions.visible, false);
+assert.equal(instance._groupWidgets.size, 0);
+settings.set_boolean('show-empty-agents', true);
+assert.equal(instance._sessions.visible, true);
+assert.equal(instance._groupWidgets.size, 2);
+settings.reset('show-empty-agents');
+assert.equal(instance._groupWidgets.size, 0);
+const sampleTime = Date.now() / 1000;
+instance._lastState = {sessions: {codex: {s: {state: 'working', context: {used_percent: 42, updated_at: sampleTime}}}},
+    usage: {codex: {updated_at: sampleTime, windows: [{used_percent: 60, window_minutes: 300, resets_at: sampleTime + 3600}]}}};
+instance._render();
+const usageRow = [...instance._rowWidgets.values()][0];
+assert.equal(usageRow.context.box.visible, true);
+assert.equal(usageRow.context.bar.value, 0.42);
+assert.match(usageRow.item.accessible, /Context approximately 42%/);
+const quotaGroup = instance._groupWidgets.get('codex');
+assert.equal(quotaGroup.usage[0].bar.value, 0.6);
+assert.equal(quotaGroup.usage[1].box.visible, false);
+settings.set_boolean('show-context-usage', false);
+assert.equal(usageRow.context.box.visible, false);
+settings.set_boolean('show-account-usage', false);
+assert.equal(quotaGroup.usage[0].box.visible, false);
+settings.reset('show-context-usage');
+settings.reset('show-account-usage');
+settings.set_boolean('mute-all', false);
+settings.set_boolean('sound-error', true);
+instance._alerts.dispatch([event(1000, 'error', 'queued')], instance._preferences);
+const queuedBeforeDisplay = instance._alerts._pendingSound;
+assert(queuedBeforeDisplay);
+settings.set_boolean('show-state-counts', false);
+assert.equal(instance._alerts._pendingSound, queuedBeforeDisplay,
+    'changing display choices must not discard an unrelated queued sound');
+settings.reset('show-state-counts');
+const playedBeforeDisplay = sounds.length;
+runTimers(1000);
+assert.equal(sounds.length, playedBeforeDisplay + 1);
+settings.reset('mute-all');
+settings.reset('sound-error');
+instance.disable();
+
+// Visible quota expires at its deadline even when reset notifications are off.
+let displayNow = 100;
+const displayDeadlines = [];
+const displayTimer = new alertsModule.namespace.QuotaResetTimer(
+    (agent, window, notify) => displayDeadlines.push({agent, window, notify}), () => displayNow);
+const displayState = {usage: {codex: {updated_at: 90, windows: [
+    {used_percent: 95, window_minutes: 300, resets_at: 110},
+]}}};
+displayTimer.update(displayState, preferences());
+assert.equal(timers.size, 1, 'visible quota schedules one expiry without enabling reset alerts');
+displayNow = 111;
+runTimers(10000);
+assert.equal(displayDeadlines.length, 1);
+assert.equal(displayDeadlines[0].notify, false, 'display expiry must not invent notification consent');
+displayTimer.update(displayState, preferences({notifications: {'quota-reset': true}}));
+assert.equal(displayDeadlines.length, 1, 'enabling alerts after expiry cannot replay its display deadline');
+displayTimer.destroy();
+displayNow = 100;
+displayTimer.update(displayState, preferences({notifications: {'quota-reset': true}}));
+displayTimer.update(displayState, preferences({mute_all: true}));
+displayNow = 111;
+runTimers(10000);
+assert.equal(displayDeadlines.at(-1).notify, false, 'mute suppresses the reset alert while expiring visible quota');
+displayTimer.destroy();
+
+// Real reset deadlines, no inferred resets or historical replay.
+let resetNow = 100;
+const resets = [];
+const resetConfig = preferences({notifications: {'quota-reset': true}});
+const resetTimer = new alertsModule.namespace.QuotaResetTimer((agent, window) => resets.push({agent, window}), () => resetNow);
+const quotaState = {usage: {codex: {updated_at: 90, windows: [
+    {used_percent: 95, window_minutes: 300, resets_at: 110},
+    {used_percent: 40, window_minutes: 10080, resets_at: 120},
+]}}};
+resetTimer.update(quotaState, resetConfig);
+assert.equal(timers.size, 1, 'one timer covers all quota deadlines');
+resetNow = 110;
+runTimers(10000);
+assert.equal(resets.length, 1);
+resetTimer.update(quotaState, resetConfig);
+assert.equal(resets.length, 1, 'repeated state cannot replay reset');
+resetNow = 130;
+resetTimer.update(quotaState, resetConfig);
+assert.equal(resets.length, 2, 'resume processes an armed deadline that passed while suspended');
+resetTimer.update(quotaState, resetConfig);
+assert.equal(resets.length, 2);
+resetTimer.destroy();
+const lateResetTimer = new alertsModule.namespace.QuotaResetTimer(() => { throw Error('startup replay'); }, () => 130);
+lateResetTimer.update(quotaState, resetConfig);
+assert.equal(timers.size, 0, 'expired startup snapshots schedule nothing');
+lateResetTimer.destroy();
+resetNow = 100;
+resetTimer.update(quotaState, resetConfig);
+assert.equal(timers.size, 1);
+resetTimer.update(quotaState, preferences({mute_all: true, show_account_usage: false}));
+assert.equal(timers.size, 0, 'hidden quota with muted alerts needs no deadline');
+resetTimer.destroy();
+
+const quotaAlerts = new alertsModule.namespace.Alerts(message => { throw Error(message); });
+quotaAlerts.quotaReset('codex', quotaState.usage.codex.windows[0], resetConfig);
+const quotaNotice = quotaAlerts._quotaNotices.get('codex').notification;
+assert.match(quotaNotice.title, /Quota reset time reached/);
+assert.match(quotaNotice.body, /Usage refreshes/);
+quotaAlerts.dispatch([], resetConfig, {sessions: {codex: {}, claude: {}}, usage: {codex: {updated_at: '111', windows: []}}});
+assert.equal(quotaAlerts._quotaNotices.size, 1, 'malformed metadata cannot resolve the reset notice');
+quotaAlerts.dispatch([], resetConfig, {sessions: {codex: {}, claude: {}}, usage: {codex: {updated_at: 111, windows: []}}});
+assert.equal(quotaAlerts._quotaNotices.size, 0, 'new authoritative quota metadata removes obsolete reset notice');
+quotaAlerts.destroy();
+notificationFailure = true;
+const quotaFailures = [];
+const failingQuotaAlerts = new alertsModule.namespace.Alerts(message => quotaFailures.push(message));
+failingQuotaAlerts.quotaReset('codex', quotaState.usage.codex.windows[0], resetConfig);
+assert.equal(failingQuotaAlerts._quotaNotices.size, 0);
+assert.equal(quotaFailures.length, 1, 'notification backend failure is contained');
+failingQuotaAlerts.destroy();
+notificationFailure = false;
+assert.equal(timers.size, 0);
+
 console.log('GNOME monitoring, bounded reads, sessions, alert history, sounds, preferences and reload lifecycle passed');

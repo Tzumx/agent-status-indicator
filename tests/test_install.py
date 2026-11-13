@@ -35,6 +35,9 @@ class InstallTests(unittest.TestCase):
                 self.assertTrue((home / '.local/bin' / name).exists())
             extension = home / 'data/gnome-shell/extensions/agent-status-indicator@Ruochen0513.github.io'
             self.assertTrue((extension / 'alerts.js').exists())
+            self.assertTrue((extension / 'io.js').exists())
+            self.assertTrue((extension / 'prefs.js').exists())
+            self.assertTrue((extension / 'stylesheet.css').exists())
             result = subprocess.run([str(home / '.local/bin/agent-status-hook'), '--agent', 'claude', '--event', 'Stop'],
                                     input=json.dumps({'session_id': 's'}), env=env, capture_output=True, text=True, timeout=5)
             self.assertEqual(result.returncode, 0, result.stderr)

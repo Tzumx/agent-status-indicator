@@ -1,6 +1,7 @@
 // Run with gjs -m tests/test_extension_gio.mjs. No running Shell is required.
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import {readJson, writeJson} from '../gnome-extension/agent-status-indicator@Ruochen0513.github.io/io.js';
 import * as State from '../gnome-extension/agent-status-indicator@Ruochen0513.github.io/state.js';
 
 const root = Gio.File.new_for_uri(import.meta.url).get_parent().get_parent();
@@ -12,19 +13,22 @@ const source = new TextDecoder().decode(bytes).replace(/^import .*;$/gm, '')
     .replace('export default class', 'class').replace('export async function', 'async function');
 const bindings = {
     GLib, Gio, St: {}, Clutter: {}, Main: {}, PanelMenu: {}, PopupMenu: {},
-    Extension: class {}, ...State, Alerts: class {},
+    Extension: class {}, ...State, readJson, Alerts: class {},
 };
-const {AgentStatusExtension, readJson} = new Function(...Object.keys(bindings),
-    source + '; return {AgentStatusExtension, readJson};')(...Object.values(bindings));
+const {AgentStatusExtension} = new Function(...Object.keys(bindings),
+    source + '; return {AgentStatusExtension};')(...Object.values(bindings));
 const directory = Gio.File.new_for_path(GLib.dir_make_tmp('agent-status-gio-XXXXXX'));
 const stateDirectory = directory.get_child('state');
 const stateFile = stateDirectory.get_child('state.json');
 const temporary = stateDirectory.get_child('state.tmp');
 const configDirectory = directory.get_child('config');
 const configFile = configDirectory.get_child('gnome.json');
+const usageDirectory = directory.get_child('usage').get_child('nested');
+const usageFile = usageDirectory.get_child('usage.json');
 const loop = new GLib.MainLoop(null, false);
 const instance = new AgentStatusExtension();
 instance._monitors = [];
+instance._metrics = new Map();
 instance._rowWidgets = new Map();
 instance._groupWidgets = new Map();
 instance._refreshId = 0;
@@ -68,15 +72,45 @@ instance._refresh = async () => {
             }
             if (!rejected)
                 throw Error('bounded read accepted oversized input');
+            configDirectory.make_directory(null);
+            configFile.replace_contents(JSON.stringify({sounds: {error: false}}), null, false, Gio.FileCreateFlags.PRIVATE, null);
             instance._configFile = configFile;
-            instance._preferences = State.preferences();
+            instance._legacyPreferences = {sounds: {error: false}};
+            instance._preferences = State.preferences(instance._legacyPreferences);
+            let muted = null;
+            instance._settings = {
+                set_boolean(_key, value) { muted = value; return true; },
+                get_user_value(key) { return key === 'mute-all' && muted !== null ? {} : null; },
+                get_boolean() { return muted; },
+            };
             instance._render = () => {};
             instance._alerts = {cancelSound() {}, destroy() {}};
             await instance._toggleMute();
             const config = await readJson(configFile, instance._cancellable);
             const mode = configFile.query_info('unix::mode', Gio.FileQueryInfoFlags.NONE, null).get_attribute_uint32('unix::mode');
-            if (!config.mute_all || (mode & 0o777) !== 0o600)
-                throw Error('native preference write failed or was not private');
+            if (!instance._preferences.mute_all || instance._preferences.sounds.error !== false
+                || config.sounds.error !== false || Object.hasOwn(config, 'mute_all') || (mode & 0o777) !== 0o600)
+                throw Error('native mute did not preserve legacy preferences');
+            await writeJson(usageFile, {codex_metadata: true}, instance._cancellable);
+            const usageMode = usageFile.query_info('unix::mode', Gio.FileQueryInfoFlags.NONE, null).get_attribute_uint32('unix::mode');
+            if ((usageMode & 0o777) !== 0o600 || !(await readJson(usageFile, instance._cancellable)).codex_metadata)
+                throw Error('usage consent was not privately saved');
+            const oldStream = usageFile.read(null);
+            await writeJson(usageFile, {codex_metadata: false}, instance._cancellable);
+            const oldValue = JSON.parse(new TextDecoder().decode(oldStream.read_bytes(4096, null).get_data()));
+            oldStream.close(null);
+            if (!oldValue.codex_metadata || (await readJson(usageFile, instance._cancellable)).codex_metadata)
+                throw Error('usage consent replacement was not atomic');
+            const cancelled = new Gio.Cancellable();
+            cancelled.cancel();
+            let cancelledWrite = false;
+            try {
+                await writeJson(usageFile, {codex_metadata: true}, cancelled);
+            } catch (error) {
+                cancelledWrite = error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED);
+            }
+            if (!cancelledWrite || (await readJson(usageFile, instance._cancellable)).codex_metadata)
+                throw Error('cancelled consent write changed the saved preference');
             finish();
         }
     } catch (error) {
@@ -93,7 +127,7 @@ stateDirectory.make_directory(null);
 replaceState(1);
 loop.run();
 instance.disable();
-for (const item of [temporary, stateFile, stateDirectory, configFile, configDirectory, directory]) {
+for (const item of [temporary, stateFile, stateDirectory, configFile, configDirectory, usageFile, usageDirectory, usageDirectory.get_parent(), directory]) {
     if (item.query_exists(null))
         item.delete(null);
 }
@@ -101,4 +135,4 @@ if (failure)
     throw failure;
 if (stage !== 2)
     throw Error('monitoring test did not complete');
-print('Native GIO directory creation, atomic replacements, bounded reads and private preferences passed');
+print('Native GIO directory creation, atomic replacements, bounded reads, legacy preferences and private atomic usage consent passed');

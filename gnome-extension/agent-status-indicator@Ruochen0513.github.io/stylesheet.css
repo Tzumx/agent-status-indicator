@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 .agent-status-box {
   spacing: 6px;
   padding: 0 6px;
@@ -24,4 +25,44 @@
 
 .agent-status-error {
   background-color: #f85149;
+}
+
+.agent-status-heading {
+  font-weight: bold;
+}
+
+.agent-status-session-title {
+  spacing: 16px;
+}
+
+.agent-status-project {
+  font-weight: bold;
+}
+
+.agent-status-state {
+  text-align: right;
+}
+
+.agent-status-secondary {
+  spacing: 10px;
+  font-size: 0.9em;
+}
+
+.agent-status-group {
+  spacing: 6px;
+}
+
+.agent-status-usage {
+  spacing: 3px;
+  padding-top: 4px;
+}
+
+.agent-status-usage-bar {
+  -barlevel-height: 4px;
+  -barlevel-border-width: 0;
+  min-width: 60px;
+}
+
+.agent-status-usage-time {
+  font-size: 0.85em;
 }

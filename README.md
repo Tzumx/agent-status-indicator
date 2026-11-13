@@ -9,6 +9,7 @@ It is designed for people who run several coding-agent sessions at the same time
 - Floating desktop indicator for Linux, macOS, and Windows.
 - Native GNOME Shell extension for GNOME 46 and 50.
 - Event-driven GNOME session menu with completion, permission, decision, and error alerts.
+- Native GNOME settings for per-event sounds/notifications, display options, and optional local usage metadata.
 - Per-session state tracking for concurrent Codex and Claude Code sessions.
 - Status priority aggregation: `error > approval > working > idle`.
 - Persistent position, size, opacity, colors, click behavior, and always-on-top settings.
@@ -60,7 +61,7 @@ agent-status-desktop
 
 The Linux installer starts the user-level `agent-status` daemon. To use the GNOME top-bar extension, log out and back in if GNOME does not load it immediately.
 
-For the native GNOME extension without desktop clients, Tkinter, or new services, use `./install.sh --gnome-only`. Add `--merge-hooks` to opt into automatic updates. Existing services remain unchanged. See [GNOME usage](docs/gnome-usage.md) for the session menu, reset guidance, notifications, sounds, and mute preferences.
+For the native GNOME extension without desktop clients, Tkinter, or new services, use `./install.sh --gnome-only`. Add `--merge-hooks` to opt into automatic updates. Existing services remain unchanged. See [GNOME usage](docs/gnome-usage.md) for the session menu, native Settings window, reset guidance, notifications, sounds, and mute preferences.
 
 ### macOS
 
@@ -327,7 +328,7 @@ Prepare the GNOME Extensions submission archive (requires Python 3 and either `g
 ./scripts/package-extension.sh
 ```
 
-The archive contains only the GNOME JavaScript client and MIT license. The companion and hooks require separate installation; the extension shows setup guidance until it receives state. See [GNOME submission notes](docs/gnome-submission.md) for listing text, reviewer notes, verification and the remaining human submission steps.
+The archive contains the GNOME JavaScript client and preferences, stylesheet, GSettings schema, and MIT license. The companion and hooks require separate installation; the extension shows setup guidance until it receives state. See [GNOME submission notes](docs/gnome-submission.md) for listing text, reviewer notes, verification and the remaining human submission steps.
 
 See [validation and measurements](docs/validation.md) for native GIO coverage, the isolated hook benchmark, and required GNOME 46/50 desktop checks.
 

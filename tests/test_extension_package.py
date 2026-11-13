@@ -23,6 +23,10 @@ class PackageTests(unittest.TestCase):
             archive.writestr('extension.js', source if source is not None else (EXTENSION / 'extension.js').read_text())
             archive.write(EXTENSION / 'state.js', 'state.js')
             archive.write(EXTENSION / 'alerts.js', 'alerts.js')
+            archive.write(EXTENSION / 'io.js', 'io.js')
+            archive.write(EXTENSION / 'prefs.js', 'prefs.js')
+            archive.write(EXTENSION / 'stylesheet.css', 'stylesheet.css')
+            archive.write(EXTENSION / 'schemas/org.gnome.shell.extensions.agent-status-indicator.gschema.xml', 'schemas/org.gnome.shell.extensions.agent-status-indicator.gschema.xml')
             archive.write(ROOT / 'LICENSE', 'LICENSE')
             if extra:
                 archive.writestr(extra, 'unwanted payload')
