@@ -133,7 +133,7 @@ Default priority for overall display: `error` > `permission/decision required` >
 - Provide a Circle/Robot head panel-icon selector and Display switches for empty groups, closed sessions, overview counts, event descriptions, account quota and session context usage.
 - Provide separate opt-in usage-source switches on Integration and independent quota-reset notification/sound controls on Alerts.
 - Keep settings pages extensible without moving session parsing or lifecycle semantics into the UI.
-- Distinguish idle, working, waiting, finished and error through text and the documented icon colors.
+- Distinguish idle, working, waiting, finished and error through theme-colored text and the documented icon colors. Keep status text and quota information readable in normal, focused and high-contrast menus on both supported Shell versions.
 
 ### 4.6 Optional usage display
 

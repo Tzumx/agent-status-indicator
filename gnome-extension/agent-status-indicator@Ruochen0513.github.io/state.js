@@ -43,7 +43,7 @@ export const AGENT_LABELS = {codex: 'Codex', claude: 'Claude Code'};
 export const STATUS_ICONS = {
     idle: 'media-record-symbolic', working: 'media-playback-start-symbolic',
     approval: 'dialog-password-symbolic', decision: 'dialog-question-symbolic',
-    finished: 'emblem-ok-symbolic', error: 'dialog-error-symbolic', closed: 'window-close-symbolic',
+    finished: 'object-select-symbolic', error: 'dialog-error-symbolic', closed: 'window-close-symbolic',
 };
 export const SUMMARY_LABELS = {
     error: 'Errors', approval: 'Waiting for permission', decision: 'Waiting for your decision',

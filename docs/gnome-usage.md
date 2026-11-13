@@ -54,7 +54,7 @@ Under **Alerts**, expand an event category to enable its desktop notification an
 
 Settings use the native GSettings schema `org.gnome.shell.extensions.agent-status-indicator`. Each choice has its own key, so menu mute and preferences changes do not overwrite unrelated choices. Existing JSON preferences remain read-only fallbacks until an individual setting is explicitly changed in Settings. Resetting a native key restores its legacy fallback, or the built-in default.
 
-The panel icon uses gray for idle, green for working, amber for permission or decision requests, blue for a confirmed finished response, and red for an agent error or unreadable state. Text labels distinguish the states as well as color.
+The panel icon uses gray for idle, green for working, amber for permission or decision requests, blue for a confirmed finished response, and red for an agent error or unreadable state. Session rows pair colored icons with theme-colored status text. Quota information uses normal text contrast rather than disabled-control styling.
 
 ## Notifications and sounds
 

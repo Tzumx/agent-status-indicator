@@ -663,6 +663,11 @@ instance._sessions.menu.open();
 const codexGroup = instance._groupWidgets.get('codex');
 assert(codexGroup instanceof Section, 'agent groups must not open a second native submenu');
 assert.equal(codexGroup.items.length, 11, 'one heading plus ten session rows');
+assert.equal(codexGroup.items[0].removedStyle, 'popup-inactive-menu-item', 'quota information is not styled as a disabled control');
+assert.notEqual(codexGroup.items[0].reactive, false, 'informational text avoids GNOME’s insensitive pseudo-class');
+const readableRow = [...instance._rowWidgets.values()][0];
+assert(!readableRow.status.style, 'state words inherit theme contrast, including keyboard focus');
+assert.match(readableRow.statusIcon.style, /color:/, 'a separate icon retains the status color');
 assert(codexGroup.items.every(item => !(item instanceof SubMenu)), 'session controls stay inline');
 const preservedRow = codexGroup.items[1];
 await updateState({...log(12, burst), sessions: {codex: Object.fromEntries(

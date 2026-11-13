@@ -115,12 +115,12 @@ export default class AgentStatusExtension extends Extension {
             text: 'Refresh local data', style_class: 'dash-label', visible: false,
         });
         Main.uiGroup.add_child(this._refreshTooltip);
-        this._refreshFeedback = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._refreshFeedback = new PopupMenu.PopupMenuItem('', {activate: false, hover: false, can_focus: false});
         this._refreshHint = this._refreshFeedback.label;
         this._refreshHint.add_style_class_name('dim-label');
         this._refreshHint.clutter_text.line_wrap = true;
         this._refreshHint.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
-        this._detail = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._detail = new PopupMenu.PopupMenuItem('', {activate: false, hover: false, can_focus: false});
         this._detail.label.clutter_text.line_wrap = true;
         this._detail.label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         this._sessions = new PopupMenu.PopupSubMenuMenuItem('Sessions');
@@ -150,18 +150,21 @@ export default class AgentStatusExtension extends Extension {
             this._render();
         });
         this._troubleshooting.menu.addMenuItem(this._resetControls);
-        this._lastReported = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._lastReported = new PopupMenu.PopupMenuItem('', {activate: false, hover: false, can_focus: false});
         this._troubleshooting.menu.addMenuItem(this._lastReported);
-        this._notificationDetail = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._notificationDetail = new PopupMenu.PopupMenuItem('', {activate: false, hover: false, can_focus: false});
         this._notificationDetail.label.clutter_text.line_wrap = true;
         this._notificationDetail.label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         this._troubleshooting.menu.addMenuItem(this._notificationDetail);
-        this._refreshDetail = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._refreshDetail = new PopupMenu.PopupMenuItem('', {activate: false, hover: false, can_focus: false});
         this._refreshDetail.label.clutter_text.line_wrap = true;
         this._refreshDetail.label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         this._troubleshooting.menu.addMenuItem(this._refreshDetail);
         this._troubleshooting.menu.addAction('Refresh status', () => this._refreshLocal());
         this._button.menu.addAction('Settings…', () => this.openPreferences());
+        for (const item of [this._refreshFeedback, this._detail, this._lastReported,
+            this._notificationDetail, this._refreshDetail])
+            item.remove_style_class_name('popup-inactive-menu-item');
         Main.panel.addToStatusArea(this.uuid, this._button, 0, 'right');
         this._setupMonitors();
         this._render();
@@ -558,14 +561,14 @@ export default class AgentStatusExtension extends Extension {
     _usageWidget() {
         const box = new St.BoxLayout({vertical: true, style_class: 'agent-status-usage', x_expand: true});
         const title = new St.BoxLayout({style_class: 'agent-status-secondary'});
-        const label = new St.Label({x_expand: true, style_class: 'dim-label'});
+        const label = new St.Label({x_expand: true});
         const amount = new St.Label();
         title.add_child(label);
         title.add_child(amount);
         const bar = new BarLevel.BarLevel({style_class: 'barlevel agent-status-usage-bar', x_expand: true});
         box.add_child(title);
         box.add_child(bar);
-        const reported = new St.Label({style_class: 'dim-label agent-status-usage-time'});
+        const reported = new St.Label({style_class: 'agent-status-usage-time'});
         box.add_child(reported);
         return {box, label, amount, bar, reported};
     }
@@ -616,7 +619,8 @@ export default class AgentStatusExtension extends Extension {
                 // GNOME permits one open submenu per top-level menu. Keep
                 // agent groups and session controls inside that single submenu.
                 group = new PopupMenu.PopupMenuSection();
-                const heading = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+                const heading = new PopupMenu.PopupBaseMenuItem({activate: false, hover: false, can_focus: false});
+                heading.remove_style_class_name('popup-inactive-menu-item');
                 const content = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'agent-status-group'});
                 content.add_child(new St.Label({text: AGENT_LABELS[agent], style_class: 'agent-status-heading'}));
                 group.usage = [];
@@ -625,7 +629,7 @@ export default class AgentStatusExtension extends Extension {
                     content.add_child(widget.box);
                     group.usage.push(widget);
                 }
-                group.reported = new St.Label({style_class: 'dim-label agent-status-usage-time'});
+                group.reported = new St.Label({style_class: 'agent-status-usage-time'});
                 content.add_child(group.reported);
                 heading.add_child(content);
                 group.addMenuItem(heading);
@@ -642,7 +646,7 @@ export default class AgentStatusExtension extends Extension {
                 group.reported.set_text(reportedTime(this._lastState.usage[agent].updated_at));
             const sessions = groups[agent];
             if (rebuilding && sessions.length === 0)
-                group.addMenuItem(new PopupMenu.PopupMenuItem('No sessions', {reactive: false}));
+                group.addMenuItem(new PopupMenu.PopupMenuItem('No sessions', {activate: false, hover: false, can_focus: false}));
             if (rebuilding && totals[agent] > 50) {
                 const start = this._sessionPage[agent] * 50;
                 group.addMenuItem(new PopupMenu.PopupMenuItem(
@@ -679,8 +683,12 @@ export default class AgentStatusExtension extends Extension {
                     label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
                     const status = new St.Label({style_class: 'agent-status-state'});
                     status.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+                    const statusBox = new St.BoxLayout({style_class: 'agent-status-session-state'});
+                    const statusIcon = new St.Icon({style_class: 'popup-menu-icon', icon_size: 16});
+                    statusBox.add_child(statusIcon);
+                    statusBox.add_child(status);
                     title.add_child(label);
-                    title.add_child(status);
+                    title.add_child(statusBox);
                     const secondary = new St.BoxLayout({style_class: 'agent-status-secondary'});
                     const identity = new St.Label({style_class: 'dim-label'});
                     identity.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
@@ -706,7 +714,7 @@ export default class AgentStatusExtension extends Extension {
                         this._detail.label.set_text('Reset command copied. Review and run it in a terminal.');
                         this._detail.visible = true;
                     });
-                    widget = {item, label, status, identity, detail, reset, context};
+                    widget = {item, label, status, statusIcon, identity, detail, reset, context};
                     this._rowWidgets.set(key, widget);
                     group.addMenuItem(item);
                 }
@@ -720,7 +728,8 @@ export default class AgentStatusExtension extends Extension {
                 widget.reset.visible = this._showResetControls;
                 widget.label.set_text(row.project);
                 widget.status.set_text(STATUS_LABELS[row.state]);
-                widget.status.set_style(`color: ${COLORS[row.state === 'decision' ? 'approval' : row.state]};`);
+                widget.statusIcon.icon_name = STATUS_ICONS[row.state];
+                widget.statusIcon.set_style(`color: ${COLORS[row.state === 'decision' ? 'approval' : row.state]};`);
                 widget.identity.set_text('#' + row.short);
                 widget.detail.set_text(detail);
                 widget.reset.set_accessible_name(`Copy reset command for ${row.project} [${row.short}]`);
