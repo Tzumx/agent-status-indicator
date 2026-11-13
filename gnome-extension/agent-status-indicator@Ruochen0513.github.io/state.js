@@ -300,6 +300,23 @@ export function quotaLabel(minutes) {
         : minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
 }
 
+export function quotaResetTime(resetsAt, now = Date.now() / 1000) {
+    if (!Number.isFinite(resetsAt) || resetsAt <= now)
+        return '';
+    const date = new Date(resetsAt * 1000);
+    if (!Number.isFinite(date.getTime()))
+        return '';
+    const current = new Date(now * 1000);
+    const options = {hour: '2-digit', minute: '2-digit'};
+    if (date.toDateString() !== current.toDateString()) {
+        options.month = 'short';
+        options.day = 'numeric';
+        if (date.getFullYear() !== current.getFullYear())
+            options.year = 'numeric';
+    }
+    return `Reported reset: ${date.toLocaleString([], options)}`;
+}
+
 export function reportedTime(updated, now = Date.now() / 1000) {
     if (!Number.isFinite(updated) || updated <= 0)
         return 'Not reported yet';

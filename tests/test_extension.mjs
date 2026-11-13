@@ -668,6 +668,11 @@ assert.notEqual(codexGroup.items[0].reactive, false, 'informational text avoids 
 const readableRow = [...instance._rowWidgets.values()][0];
 assert(!readableRow.status.style, 'state words inherit theme contrast, including keyboard focus');
 assert.match(readableRow.statusIcon.style, /color:/, 'a separate icon retains the status color');
+const quotaWidget = instance._usageWidget();
+instance._updateUsage(quotaWidget, {used_percent: 42, resets_at: Date.now() / 1000 + 3600}, '5h quota');
+assert(quotaWidget.reported.visible);
+assert.match(quotaWidget.reported.text, /^Reported reset: /);
+assert.match(quotaWidget.bar.accessible, /Reported reset:/, 'quota reset is included in the accessible value');
 assert(codexGroup.items.every(item => !(item instanceof SubMenu)), 'session controls stay inline');
 const preservedRow = codexGroup.items[1];
 await updateState({...log(12, burst), sessions: {codex: Object.fromEntries(
@@ -1156,7 +1161,19 @@ failingQuotaAlerts.destroy();
 notificationFailure = false;
 assert.equal(timers.size, 0);
 
-const {reportedTime, refreshFeedback} = model.namespace;
+const {reportedTime, refreshFeedback, quotaResetTime} = model.namespace;
+const resetClock = new Date(2026, 0, 2, 10, 0).getTime() / 1000;
+const todayReset = new Date(2026, 0, 2, 14, 30);
+assert.equal(quotaResetTime(todayReset.getTime() / 1000, resetClock),
+    `Reported reset: ${todayReset.toLocaleString([], {hour: '2-digit', minute: '2-digit'})}`);
+const tomorrowReset = new Date(2026, 0, 3, 14, 30);
+assert.equal(quotaResetTime(tomorrowReset.getTime() / 1000, resetClock),
+    `Reported reset: ${tomorrowReset.toLocaleString([], {hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric'})}`);
+const nextYearReset = new Date(2027, 0, 2, 14, 30);
+assert.equal(quotaResetTime(nextYearReset.getTime() / 1000, resetClock),
+    `Reported reset: ${nextYearReset.toLocaleString([], {hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric', year: 'numeric'})}`);
+for (const reset of [undefined, null, NaN, Infinity, 1e30, '2000000000', resetClock, resetClock - 1])
+    assert.equal(quotaResetTime(reset, resetClock), '');
 assert.equal(reportedTime(0, 10000), 'Not reported yet');
 assert.equal(reportedTime(9999, 10000), 'Last reported just now');
 assert.equal(reportedTime(9880, 10000), 'Last reported 2 min ago');

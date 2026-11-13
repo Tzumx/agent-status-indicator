@@ -11,7 +11,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {ensureActorVisibleInScrollView} from 'resource:///org/gnome/shell/misc/animationUtils.js';
 import {Spinner} from 'resource:///org/gnome/shell/ui/animation.js';
-import {summarize, COLORS, sessionRows, STATUS_LABELS, AGENT_LABELS, preferences, AlertCursor, sessionSummary, sessionDetail, SUMMARY_LABELS, STATUS_ICONS, settingsPreferences, quotaWindows, quotaLabel, currentAlerts, reportedTime, refreshFeedback} from './state.js';
+import {summarize, COLORS, sessionRows, STATUS_LABELS, AGENT_LABELS, preferences, AlertCursor, sessionSummary, sessionDetail, SUMMARY_LABELS, STATUS_ICONS, settingsPreferences, quotaWindows, quotaLabel, quotaResetTime, currentAlerts, reportedTime, refreshFeedback} from './state.js';
 import {Alerts, QuotaResetTimer} from './alerts.js';
 import * as LoginManager from 'resource:///org/gnome/shell/misc/loginManager.js';
 import {readJson, refreshUsage} from './io.js';
@@ -580,11 +580,12 @@ export default class AgentStatusExtension extends Extension {
         const percent = Math.round(value.used_percent);
         widget.label.set_text(title);
         widget.amount.set_text(`${percent}% used`);
-        widget.reported.visible = Number.isFinite(value.updated_at) && value.updated_at > 0;
+        const reset = quotaResetTime(value.resets_at);
+        widget.reported.visible = Boolean(reset) || Number.isFinite(value.updated_at) && value.updated_at > 0;
         if (widget.reported.visible)
-            widget.reported.set_text(reportedTime(value.updated_at));
+            widget.reported.set_text(reset || reportedTime(value.updated_at));
         widget.bar.value = value.used_percent / 100;
-        widget.bar.set_accessible_name(`${title}: ${percent}% used`);
+        widget.bar.set_accessible_name(`${title}: ${percent}% used${reset ? `; ${reset}` : ''}`);
         const color = percent >= 95 ? COLORS.error : percent >= 80 ? COLORS.approval : COLORS.finished;
         widget.bar.set_style(`-barlevel-active-background-color: ${color};`);
     }
