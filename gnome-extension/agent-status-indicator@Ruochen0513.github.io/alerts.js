@@ -19,6 +19,33 @@ export class Alerts {
         this._quotaNotices = new Map();
         this._soundId = 0;
         this._pendingSound = null;
+        this._previewCancellable = null;
+    }
+
+    preview(kind, config) {
+        if (!Object.hasOwn(SOUND_NAMES, kind))
+            throw new Error('Unknown alert sound.');
+        this.cancelPreview();
+        this._previewCancellable = new Gio.Cancellable();
+        try {
+            this._playSound(kind, config.sound_files[kind], this._previewCancellable);
+        } catch (error) {
+            this.cancelPreview();
+            throw error;
+        }
+    }
+
+    cancelPreview() {
+        this._previewCancellable?.cancel();
+        this._previewCancellable = null;
+    }
+
+    _playSound(kind, path, cancellable = null) {
+        const player = global.display.get_sound_player();
+        if (path)
+            player.play_from_file(Gio.File.new_for_path(path), 'Agent status', cancellable);
+        else
+            player.play_from_theme(SOUND_NAMES[kind], 'Agent status', cancellable);
     }
 
     dispatch(events, config, state = null) {
@@ -151,11 +178,7 @@ export class Alerts {
             const sound = this._pendingSound;
             this._pendingSound = null;
             try {
-                const player = global.display.get_sound_player();
-                if (sound.path)
-                    player.play_from_file(Gio.File.new_for_path(sound.path), 'Agent status', null);
-                else
-                    player.play_from_theme(SOUND_NAMES[sound.kind], 'Agent status', null);
+                this._playSound(sound.kind, sound.path);
             } catch (error) {
                 this._reportError(`Cannot play alert sound: ${error.message}`);
             }
@@ -172,6 +195,7 @@ export class Alerts {
 
     destroy() {
         this.cancelSound();
+        this.cancelPreview();
         for (const source of [...this._sources.values()])
             source.destroy();
         this._sources.clear();

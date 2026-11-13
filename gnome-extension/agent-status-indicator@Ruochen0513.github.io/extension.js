@@ -14,7 +14,7 @@ import {Spinner} from 'resource:///org/gnome/shell/ui/animation.js';
 import {summarize, COLORS, sessionRows, STATUS_LABELS, AGENT_LABELS, preferences, AlertCursor, sessionSummary, sessionDetail, SUMMARY_LABELS, STATUS_ICONS, settingsPreferences, quotaWindows, quotaLabel, quotaResetTime, currentAlerts, reportedTime, refreshFeedback} from './state.js';
 import {Alerts, QuotaResetTimer} from './alerts.js';
 import * as LoginManager from 'resource:///org/gnome/shell/misc/loginManager.js';
-import {readJson, refreshUsage} from './io.js';
+import {readJson, refreshUsage, exportSoundPreview} from './io.js';
 
 
 function isMissing(error) {
@@ -59,6 +59,14 @@ export default class AgentStatusExtension extends Extension {
         this._sessionPage = {claude: 0, codex: 0};
         this._cursor = new AlertCursor();
         this._alerts = new Alerts(message => this._reportError(message));
+        this._soundPreview = null;
+        try {
+            this._soundPreview = exportSoundPreview(
+                kind => this._alerts.preview(kind, this._preferences),
+                () => this._alerts.cancelPreview());
+        } catch (error) {
+            this._reportError(`Cannot enable sound previews: ${error.message}`);
+        }
         this._quotaTimer = new QuotaResetTimer((agent, window, notify) => {
             if (notify)
                 this._alerts.quotaReset(agent, window, this._preferences);
@@ -172,6 +180,8 @@ export default class AgentStatusExtension extends Extension {
     }
 
     disable() {
+        this._soundPreview?.unexport();
+        this._soundPreview = null;
         for (const id of [this._refreshId, this._recoveryId, this._feedbackId, this._tooltipId]) {
             if (id)
                 GLib.source_remove(id);

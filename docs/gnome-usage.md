@@ -46,6 +46,8 @@ Choose **Settings…** in the indicator menu, or use the preferences button in G
 
 Under **Alerts**, expand an event category to enable its desktop notification and sound independently. Use the file button to choose a local OGG, OGA or WAV sound, and the undo button to restore the system theme sound. **Mute all alerts** suppresses both notifications and sounds. Changes apply immediately to the loaded version supporting these settings; a Shell code update still requires the next normal login.
 
+**Alerts → Sound file** offers a play button to preview the selected sound, including the system default. Preview is an explicit action and works even when alerts are muted; it does not change notification or sound settings. It uses the enabled extension’s native sound player and desktop sound-effects volume. A new preview replaces the previous one, and closing Settings or disabling the extension stops it. If the extension is disabled or its loaded code predates sound preview, Settings shows an error.
+
 **Display → Panel icon** selects **Circle** (default) or **Robot head**. Both keep the same status colors and update immediately in a loaded version supporting this setting. The robot is a bundled symbolic SVG, so it does not depend on a theme providing a robot icon.
 
 **Display** also controls empty agent groups, closed sessions, state counts, last-event descriptions, account quota and per-session context usage.

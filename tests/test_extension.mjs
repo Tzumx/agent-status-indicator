@@ -12,6 +12,8 @@ const pendingReads = [];
 const openedUrls = [];
 const sources = [];
 const sounds = [];
+const previewExports = new Map();
+const playbacks = [];
 const files = new Map();
 const reads = new Map();
 const directories = new Set(['/', '/cache', '/cache/agent-status-indicator', '/config']);
@@ -335,8 +337,12 @@ const context = vm.createContext({
         if (audioFailure)
             throw Error('audio unavailable');
         return {
-            play_from_theme: name => sounds.push(name),
-            play_from_file: path => sounds.push(path.path),
+            play_from_theme: (name, _description, cancellable) => {
+                sounds.push(name); playbacks.push({name, cancellable});
+            },
+            play_from_file: (path, _description, cancellable) => {
+                sounds.push(path.path); playbacks.push({name: path.path, cancellable});
+            },
         };
     }}},
 });
@@ -423,6 +429,11 @@ const imports = {
         Bytes: class { constructor(data) { this.data = data; } },
     }},
     'gi://Gio': {default: {
+        DBus: {session: {}},
+        DBusExportedObject: {wrapJSObject: (_xml, methods) => ({
+            export(_connection, path) { assert(!previewExports.has(path)); this.path = path; previewExports.set(path, methods); },
+            unexport() { previewExports.delete(this.path); },
+        })},
         Subprocess: {new: argv => new RefreshChild(argv)}, SubprocessFlags: {STDOUT_PIPE: 1, STDERR_SILENCE: 2},
         Cancellable, IOErrorEnum: {NOT_FOUND: 1, EXISTS: 3, WRONG_ETAG: 4}, FileMonitorFlags: {WATCH_MOVES: 1},
         ThemedIcon: class {constructor(props) { Object.assign(this, props); }},
@@ -673,6 +684,7 @@ instance._updateUsage(quotaWidget, {used_percent: 42, resets_at: Date.now() / 10
 assert(quotaWidget.reported.visible);
 assert.match(quotaWidget.reported.text, /^Reported reset: /);
 assert.match(quotaWidget.bar.accessible, /Reported reset:/, 'quota reset is included in the accessible value');
+assert.equal(previewExports.size, 1, 'the enabled extension registers one sound preview endpoint');
 assert(codexGroup.items.every(item => !(item instanceof SubMenu)), 'session controls stay inline');
 const preservedRow = codexGroup.items[1];
 await updateState({...log(12, burst), sessions: {codex: Object.fromEntries(
@@ -1160,6 +1172,29 @@ assert.equal(quotaFailures.length, 1, 'notification backend failure is contained
 failingQuotaAlerts.destroy();
 notificationFailure = false;
 assert.equal(timers.size, 0);
+
+const previewConfig = preferences({mute_all: true, sounds: {completion: false}, sound_files: {error: '/sounds/custom.wav'}});
+const audition = new alertsModule.namespace.Alerts(message => { throw Error(message); });
+const beforePreviewTimers = timers.size;
+const beforePreviewSources = sources.length;
+audition.preview('completion', previewConfig);
+assert.equal(playbacks.at(-1).name, 'complete', 'explicit preview works while alerts are muted');
+const firstPreview = playbacks.at(-1).cancellable;
+audition.preview('error', previewConfig);
+assert(firstPreview.is_cancelled(), 'a new preview cancels the previous sound');
+assert.equal(playbacks.at(-1).name, '/sounds/custom.wav', 'preview uses the saved custom sound');
+const customPreview = playbacks.at(-1).cancellable;
+assert.throws(() => audition.preview('/untrusted/path.wav', previewConfig), /Unknown alert sound/);
+assert(!customPreview.is_cancelled(), 'invalid requests do not replace a valid preview');
+assert.equal(timers.size, beforePreviewTimers, 'preview adds no idle timer');
+assert.equal(sources.length, beforePreviewSources, 'preview creates no notification source');
+audition.destroy();
+assert(customPreview.is_cancelled(), 'disable cleanup cancels preview playback');
+audioFailure = true;
+assert.throws(() => audition.preview('completion', previewConfig), /audio unavailable/);
+assert.equal(audition._previewCancellable, null, 'failed playback releases preview state');
+audioFailure = false;
+assert.equal(previewExports.size, 0, 'disable removes the sound preview endpoint');
 
 const {reportedTime, refreshFeedback, quotaResetTime} = model.namespace;
 const resetClock = new Date(2026, 0, 2, 10, 0).getTime() / 1000;

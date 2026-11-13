@@ -5,7 +5,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 import {ALERT_KINDS, SOUND_NAMES, STATUS_ICONS, preferences, settingsPreferences, safeText, DISPLAY_SETTINGS, PANEL_ICONS} from './state.js';
-import {readJson, writeJson} from './io.js';
+import {readJson, writeJson, requestSoundPreview, stopSoundPreview} from './io.js';
 
 const CATEGORIES = {
     completion: ['Response finished', 'An agent has finished responding.', 'finished'],
@@ -19,6 +19,7 @@ export default class AgentStatusPreferences extends ExtensionPreferences {
     async fillPreferencesWindow(window) {
         this._window = window;
         this._closed = false;
+        this._previewRequested = false;
         this._syncing = true;
         this._cancellable = new Gio.Cancellable();
         this._file = Gio.File.new_for_path(GLib.build_filenamev([
@@ -36,6 +37,8 @@ export default class AgentStatusPreferences extends ExtensionPreferences {
         window.connect('close-request', () => {
             this._closed = true;
             this._cancellable.cancel();
+            if (this._previewRequested)
+                stopSoundPreview().catch(() => {});
             this._settings.disconnect(this._settingsChangedId);
             return false;
         });
@@ -77,14 +80,20 @@ export default class AgentStatusPreferences extends ExtensionPreferences {
                 icon_name: 'document-open-symbolic', tooltip_text: 'Choose a sound file', valign: Gtk.Align.CENTER,
             });
             choose.connect('clicked', () => this._chooseSound(kind));
+            const preview = new Gtk.Button({
+                icon_name: 'media-playback-start-symbolic', valign: Gtk.Align.CENTER,
+                tooltip_text: 'Preview sound, even when alerts are muted',
+            });
+            preview.connect('clicked', () => this._previewSound(kind));
             const reset = new Gtk.Button({
                 icon_name: 'edit-undo-symbolic', tooltip_text: 'Use the system default sound', valign: Gtk.Align.CENTER,
             });
             reset.connect('clicked', () => this._save({sound_files: {[kind]: ''}}));
+            file.add_suffix(preview);
             file.add_suffix(choose);
             file.add_suffix(reset);
             section.add_row(file);
-            this._rows.set(kind, {section, notification, sound, file, reset});
+            this._rows.set(kind, {section, notification, sound, file, reset, preview});
         }
 
         const display = new Adw.PreferencesPage({title: 'Display', icon_name: 'preferences-desktop-display-symbolic'});
@@ -302,6 +311,28 @@ export default class AgentStatusPreferences extends ExtensionPreferences {
         } catch (error) {
             this._sync(settingsPreferences(this._settings, this._legacy));
             this._showError(error);
+        }
+    }
+
+    async _previewSound(kind) {
+        if (this._closed || !this._rows.get(kind).preview.sensitive)
+            return;
+        this._previewRequested = true;
+        for (const row of this._rows.values())
+            row.preview.sensitive = false;
+        try {
+            await requestSoundPreview(kind, this._cancellable);
+        } catch (error) {
+            if (!this._closed) {
+                const unavailable = error instanceof GLib.Error && Gio.DBusError.is_remote_error(error)
+                    && !Gio.DBusError.get_remote_error(error).endsWith('.PreviewFailed');
+                const reason = unavailable ? new Error('Enable the updated extension to preview sounds.') : error;
+                this._showError(reason, 'Could not preview the sound.');
+            }
+        } finally {
+            if (!this._closed)
+                for (const row of this._rows.values())
+                    row.preview.sensitive = true;
         }
     }
 

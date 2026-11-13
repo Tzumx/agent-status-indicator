@@ -29,6 +29,16 @@ class GnomeIOTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Native preferences", result.stdout)
 
+    @unittest.skipUnless(shutil.which("gjs") and shutil.which("dbus-run-session"),
+                         "gjs and dbus-run-session are optional outside GNOME")
+    def test_native_sound_preview_is_bounded_and_cancellable(self):
+        script = Path(__file__).with_name("test_sound_preview_gio.mjs")
+        env = {**os.environ, "AGENT_STATUS_TEST_BUS": "1"}
+        result = subprocess.run(["dbus-run-session", "--", "gjs", "-m", str(script)],
+                                env=env, capture_output=True, text=True, timeout=12)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Native sound preview", result.stdout)
+
     @unittest.skipUnless(shutil.which("gjs"), "gjs is optional outside GNOME")
     def test_native_refresh_is_bounded_and_cancellable(self):
         script = Path(__file__).with_name("test_usage_refresh_gio.mjs")

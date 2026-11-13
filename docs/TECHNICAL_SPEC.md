@@ -127,7 +127,7 @@ Default priority for overall display: `error` > `permission/decision required` >
 ### 4.5 Preferences
 
 - Provide a standard GTK4/libadwaita extension preferences window, accessible from the menu and GNOME extension managers.
-- Allow global mute, independent sound/notification toggles for each event category, local OGG/OGA/WAV selection, and restoration of the system theme sound.
+- Allow global mute, independent sound/notification toggles for each event category, local OGG/OGA/WAV selection, restoration of the system theme sound, and an explicit sound preview. Preview uses the enabled extension’s native sound player even while alerts are muted, never creates notifications or changes settings, and stops on replacement, preferences close or extension disable. No extra audio dependency, subprocess or idle timer is required.
 - Use native GSettings keys for editable preferences, preserving existing `gnome.json` values as read-only fallbacks until each setting is explicitly changed.
 - Put brief, expandable hook and usage setup instructions on the Integration page. Help must remain useful offline. Show plain-text action errors in the active preferences window; retain retry controls for settings load failures.
 - Provide a Circle/Robot head panel-icon selector and Display switches for empty groups, closed sessions, overview counts, event descriptions, account quota and session context usage.

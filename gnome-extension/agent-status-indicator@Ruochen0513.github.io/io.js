@@ -2,6 +2,43 @@
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 
+const PREVIEW_PATH = '/org/gnome/Shell/Extensions/AgentStatusIndicator';
+const PREVIEW_INTERFACE = 'org.gnome.Shell.Extensions.AgentStatusIndicator';
+const PREVIEW_XML = `<node><interface name="${PREVIEW_INTERFACE}">
+    <method name="PreviewSound"><arg name="kind" type="s" direction="in"/></method>
+    <method name="StopSoundPreview"/>
+</interface></node>`;
+
+export function exportSoundPreview(preview, stop) {
+    const object = Gio.DBusExportedObject.wrapJSObject(PREVIEW_XML, {
+        PreviewSoundAsync([kind], invocation) {
+            try {
+                preview(kind);
+                invocation.return_value(null);
+            } catch (error) {
+                invocation.return_dbus_error(`${PREVIEW_INTERFACE}.PreviewFailed`, error.message);
+            }
+        },
+        StopSoundPreview: stop,
+    });
+    object.export(Gio.DBus.session, PREVIEW_PATH);
+    return object;
+}
+
+export function requestSoundPreview(kind, cancellable) {
+    return asyncCall(Gio.DBus.session, 'call', 'call_finish', [
+        'org.gnome.Shell', PREVIEW_PATH, PREVIEW_INTERFACE, 'PreviewSound',
+        new GLib.Variant('(s)', [kind]), null, Gio.DBusCallFlags.NONE, 2000, cancellable,
+    ]);
+}
+
+export function stopSoundPreview() {
+    return asyncCall(Gio.DBus.session, 'call', 'call_finish', [
+        'org.gnome.Shell', PREVIEW_PATH, PREVIEW_INTERFACE, 'StopSoundPreview',
+        null, null, Gio.DBusCallFlags.NONE, 2000, null,
+    ]);
+}
+
 export function asyncCall(object, start, finish, args) {
     return new Promise((resolve, reject) => {
         object[start](...args, (source, result) => {
