@@ -66,7 +66,7 @@ def transition_session(previous: dict, state: str, message: str, event: str,
         action_id = previous.get("action_id", "")
     if previous_turn and ((turn_id and turn_id != previous_turn) or event == "SessionStart"):
         retired = (retired + [previous_turn])[-32:]
-    return {
+    result = {
         "state": state, "message": message, "event": event, "updated_at": observed,
         "turn_id": turn_id or (previous_turn if event != "SessionStart" else ""),
         "project": label(project or previous.get("project"), 80),
@@ -75,6 +75,54 @@ def transition_session(previous: dict, state: str, message: str, event: str,
         "retired_turns": retired,
         "seen_alerts": string_list(previous.get("seen_alerts"), 64),
     }
+
+    if event not in {"Reset", "SessionEnd", "Interrupt"} and "context" in previous:
+        result["context"] = previous["context"]
+    return result
+
+
+def usage_snapshot(value: Any) -> dict:
+    """Accept only numeric usage metadata; never carry source payloads forward."""
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    for kind in ("context", "quota"):
+        item = value.get(kind)
+        if not isinstance(item, dict):
+            continue
+        updated = item.get("updated_at")
+        if type(updated) not in (int, float) or not 0 < updated < 8640000000000 or not math.isfinite(updated):
+            continue
+        if kind == "context":
+            used = item.get("used_percent")
+            if type(used) in (int, float) and 0 <= used <= 100 and math.isfinite(used):
+                result[kind] = {"used_percent": used, "updated_at": updated}
+        else:
+            windows = []
+            for window in item.get("windows", [])[:2] if isinstance(item.get("windows"), list) else []:
+                if not isinstance(window, dict):
+                    continue
+                used, minutes, resets = (window.get(key) for key in ("used_percent", "window_minutes", "resets_at"))
+                if (type(used) not in (int, float) or not 0 <= used <= 100 or not math.isfinite(used)
+                        or type(minutes) is not int or not 0 < minutes <= 525600
+                        or type(resets) not in (int, float) or not updated < resets < 8640000000000 or not math.isfinite(resets)):
+                    continue
+                windows.append({"used_percent": used, "window_minutes": minutes, "resets_at": resets})
+            result[kind] = {"updated_at": updated, "windows": windows}
+    return result
+
+
+def merge_usage(state: dict, agent: str, session_id: str, value: Any) -> None:
+    record = state["sessions"][agent].get(session_id)
+    if record is None or record.get("event") in {"SessionEnd", "Reset", "Interrupt"}:
+        return
+    snapshot = usage_snapshot(value)
+    context = snapshot.get("context")
+    if context and context["updated_at"] >= record.get("context", {}).get("updated_at", 0):
+        record["context"] = context
+    quota = snapshot.get("quota")
+    if quota and quota["updated_at"] >= state.get("usage", {}).get(agent, {}).get("updated_at", 0):
+        state.setdefault("usage", {})[agent] = quota
 
 
 def normalize_alerts(value: Any) -> dict | None:
@@ -152,6 +200,9 @@ def normalize_state(state: Any) -> dict[str, Any]:
                 "turn_id": str(item.get("turn_id") or ""),
                 "updated_at": timestamp(item.get("updated_at"), current),
             }
+            context = usage_snapshot({"context": item.get("context")}).get("context")
+            if context:
+                cleaned[str(sid)]["context"] = context
             for key, limit in (("project", 80), ("action_id", 256), ("attention", 16)):
                 if key in item:
                     cleaned[str(sid)][key] = label(item[key], limit)
@@ -165,6 +216,10 @@ def normalize_state(state: Any) -> dict[str, Any]:
         "sessions": sessions,
         "agents": {agent: aggregate_agent(agent, sessions[agent], current) for agent in AGENTS},
     }
+    raw_usage = state.get("usage")
+    if isinstance(raw_usage, dict):
+        usage = {agent: usage_snapshot({"quota": raw_usage.get(agent)}).get("quota") for agent in AGENTS}
+        result["usage"] = {agent: item for agent, item in usage.items() if item is not None}
     alerts = normalize_alerts(state.get("alerts"))
     if alerts is not None:
         result["alerts"] = alerts

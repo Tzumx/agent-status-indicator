@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_status_state import (empty_state, normalize_state, timestamp, VALID_STATES,
-                                transition_session, alert_kind, MAX_ALERTS)
+                                transition_session, alert_kind, MAX_ALERTS, merge_usage)
 
 
 APP_NAME = "agent-status-indicator"
@@ -147,6 +147,7 @@ def apply_update(
     action_id: str = "",
     attention: str = "",
     legacy_session_id: str = "",
+    usage: dict | None = None,
 ) -> dict[str, Any]:
     if agent not in VALID_AGENTS:
         raise ValueError(f"invalid agent: {agent}")
@@ -215,10 +216,24 @@ def apply_update(
                 alerts["events"] = alerts["events"][-MAX_ALERTS:]
                 record["seen_alerts"] = (seen + [key])[-64:]
             sessions[sid] = record
+            merge_usage(state, target, sid, usage)
         state["updated_at"] = ts
         state = normalize_state(state)
         _save_state_unlocked(state)
         return state
+
+
+def apply_usage(agent: str, session_id: str, usage: dict, observed_at: float) -> None:
+    """A metadata update must not change lifecycle state, timestamps or alerts."""
+    if agent not in {"codex", "claude"}:
+        raise ValueError("invalid agent")
+    with state_lock():
+        state = load_state()
+        record = state["sessions"][agent].get(session_id)
+        if record is None or observed_at < record["updated_at"]:
+            return
+        merge_usage(state, agent, session_id, usage)
+        _save_state_unlocked(state)
 
 
 def command_update(args: argparse.Namespace) -> int:

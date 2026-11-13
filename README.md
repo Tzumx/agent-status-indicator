@@ -308,7 +308,7 @@ gnome-extensions info agent-status-indicator@Ruochen0513.github.io
 - No network connection is required.
 - Hooks retain lifecycle labels, IDs, and project basenames; arbitrary payload messages and tool input are not persisted. Transcript-path fallback identities are hashed without reading the transcript.
 - Linux Unix sockets use `0600` permissions.
-- The project does not read full Codex or Claude Code conversation logs.
+- Usage collection is opt-in. Codex may read bounded portions of its supplied session file, retaining only numeric usage metadata; Claude uses optional status-line JSON. See [GNOME usage](docs/gnome-usage.md#account-quota-and-session-context) for access bounds and configuration.
 
 ## Development
 

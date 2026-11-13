@@ -34,11 +34,12 @@ As of the baseline reviewed for this specification, the GNOME extension refreshe
 5. Graceful operation without a resident daemon or extra tray process.
 6. GNOME 46 support and a tested migration path to GNOME 50.
 7. Automated tests, installation safety, troubleshooting, and resource measurements.
+8. Opt-in local usage metadata, configurable quota/context display, and reported quota-reset alerts.
 
 ### Out of scope for the initial release
 
 - Running or controlling agent sessions from the indicator.
-- Reading chat transcripts or inferring task intent from conversation text.
+- Full conversation-log reads or inferring task intent from conversation text. The optional bounded Codex usage-metadata collector described below is the only session-file exception.
 - Cloud accounts, synchronization, remote dashboards, telemetry, or browser integrations.
 - Exact task-level completion prediction; a lifecycle `Stop` event means a response/turn stopped, not necessarily that the whole project is complete.
 - Reliable focus switching to every possible terminal emulator; this may be explored later as an opt-in enhancement.
@@ -59,13 +60,13 @@ This is a downstream extension of an active upstream codebase, not a replacement
 
 ### 4.1 Top-bar indicator
 
-Show one compact icon in the GNOME top bar. Its color/state reflects the highest-priority session requiring attention. The menu opens on click and shows:
+Show one compact icon in the right status area of the GNOME top bar, before the system controls. Its color/state reflects the highest-priority session requiring attention. The menu opens on click and shows:
 
-- An overall summary with counts by state.
-- Separate groups for Claude Code and Codex.
-- One row per session with a project label, short stable session identifier, status, and last meaningful event/time.
+- A session-count headline and optional separate labeled counts by state, omitting empty categories.
+- Separate groups for Claude Code and Codex; hide empty groups by default, with a preference to show them.
+- One row per session with a project name, independently visible status and short stable session identifier, and a timestamp. Last-event descriptions are optional to avoid repeating the status.
 - Distinct rows when two sessions share the same working directory or project name.
-- Guided session-specific reset-command copying for stale or orphaned sessions. The user reviews and executes the command in a terminal; the extension does not execute destructive resets.
+- Recovery controls hidden by default, exposed explicitly through **Troubleshooting → Show reset controls** for stale or orphaned sessions. The user reviews and executes a session-specific reset command in a terminal; the extension does not execute resets.
 
 An illustrative menu (not a required visual layout):
 
@@ -106,6 +107,9 @@ Default priority for overall display: `error` > `permission/decision required` >
 - Use distinct human-readable messages for completion, permission, decision, and failure.
 - Prefer normal urgency for completion and elevated urgency for events that need a response; do not assume a desktop environment will always show a banner.
 - Notify once per meaningful transition. Reloading the extension, rereading the state file, or replaying the same hook must not send another alert.
+- Keep at most one current notification per session. Remove that session's obsolete notification when authoritative lifecycle state shows that the request resolved, work resumed, the next turn started, or the session ended/reset/disappeared.
+- Preserve unresolved notices from other sessions and applications. Age alone must never expire a session notice.
+- Consume historical transitions that are already superseded without raising a stale notice or sound. Cancel queued sounds if their transition is resolved before playback; delayed old events must not remove a newer notice.
 - Notifications must be configurable by event category, with a way to mute all alerts.
 - If the desktop's notification service is unavailable, state tracking and the panel must keep working.
 
@@ -117,6 +121,30 @@ Default priority for overall display: `error` > `permission/decision required` >
 - Never play sound on every tool call, render tick, extension startup, or repeated state-file update.
 - Missing sound files or an unavailable audio backend must fail silently or with a useful diagnostic, never interrupt the agent. Volume follows desktop sound-effects settings; category mute is independently configurable from visual notifications.
 - Bursts of simultaneous completions should be rate-limited or coalesced to prevent sound floods while preserving per-session visible notifications.
+
+### 4.5 Preferences
+
+- Provide a standard GTK4/libadwaita extension preferences window, accessible from the menu and GNOME extension managers.
+- Allow global mute, independent sound/notification toggles for each event category, local OGG/OGA/WAV selection, and restoration of the system theme sound.
+- Use native GSettings keys for editable preferences, preserving existing `gnome.json` values as read-only fallbacks until each setting is explicitly changed.
+- Put one-time hook setup help on an Integration page, rather than exposing setup as a routine status-menu action.
+- Provide Display switches for empty groups, overview counts, event descriptions, account quota and session context usage.
+- Provide separate opt-in usage-source switches on Integration and independent quota-reset notification/sound controls on Alerts.
+- Keep settings pages extensible without moving session parsing or lifecycle semantics into the UI.
+- Distinguish idle, working, waiting, finished and error through text and the documented icon colors.
+
+### 4.6 Optional usage display
+
+- Show the most recent shared account quota once per agent group and context-window usage per session, using labeled percentages and native level bars. Do not sum account percentages across sessions. Multiple simultaneous accounts for one agent are not distinguished in this version.
+- Show only validated reported data; unavailable values are hidden rather than presented as zero. Retain report timestamps and hide expired quota windows without inventing a new zero-usage snapshot.
+- Codex collection is disabled by default and enabled explicitly in Settings. At supported lifecycle hooks, read only the supplied session file under the configured Codex sessions directory, verify its session identity, and extract numeric token-count/rate-limit metadata. Bound each read to a 64 KiB header plus a 256 KiB tail and each parsed record to 64 KiB; ignore incomplete records.
+- Session files also contain conversation text. Never retain, display, log or infer meaning from that text. Do not scan for other session files, traverse complete histories, request account credentials, add network calls, or require a daemon.
+- Codex context is an estimate from the latest model request's token count and reported context window, never cumulative lifetime tokens. The file format is unstable; unsupported/missing metadata means unavailable usage.
+- Claude Code uses its documented optional status-line JSON input, including reported context percentage and available account quota windows. Preserve existing status-line commands when the user chooses a wrapper; never silently replace configuration.
+- Usage-only writes preserve session lifecycle, event timestamps, replay guards and alert history, using the existing locked atomic state transaction. Older snapshots must not overwrite newer data.
+- Visible quota expiry and optional reset alerts share one one-shot timer for all known reported deadlines. Notify once when an armed deadline arrives, including on resume; do not replay past deadlines at startup or after unmuting.
+- Reset alerts describe the reported reset time, not verified remaining quota. Refresh usage only on new source data and clear the obsolete reset notice when newer quota metadata arrives. Notification and sound are independently configurable and disabled by default.
+- Source consent is stored in a small private XDG config file readable by the companion; no GSettings process is launched per hook. Display and alert preferences remain native GSettings.
 
 ## 5. Architecture
 
@@ -288,6 +316,8 @@ The initial release is acceptable only when these checks have evidence:
 16. **Privacy:** no conversation content, secrets, private full paths, or network transmission are introduced.
 17. **Regression checks:** Python unit tests, JS extension tests, Python compilation, and shell syntax checks pass; failures or unavailable tests are reported.
 18. **Upstream portability:** changed code and docs preserve the upstream layout where possible; any necessary structural divergence is justified, isolated, and documented for future upstream PRs.
+19. **Optional usage:** collection defaults to off; bounded reads and metadata-only persistence are verified. Account quota appears once per agent and context per session, with missing/expired data hidden and independent display controls.
+20. **Quota reset alerts:** reported deadlines notify once only when enabled, without polling or startup replay; newer quota data clears obsolete notices. Physical suspend/resume and real account data remain explicit release checks.
 
 ## 10. Project checks
 
@@ -306,7 +336,7 @@ For measurements, document Ubuntu/GNOME versions, hardware, number of live sessi
 
 The implementation preserves upstream filenames, entry points, and the four-state version-3 contract:
 
-- The GNOME extension dispatches native notifications and sounds; hooks only normalize and transact state in-process.
+- The GNOME extension dispatches native notifications and sounds; hooks normalize lifecycle data, optionally extract usage metadata, and transact state in-process.
 - Optional project/action/attention metadata and a generation/sequence alert log extend the existing JSON. Decision remains `approval`; finished responding requires confirmed `Stop` provenance.
 - Legacy transcript-path identities are migrated atomically when the matching hook next updates state. Existing canonical records keep precedence; unrelated session identities are never merged by project or directory.
 - The latest 256 meaningful alert transitions are retained. Startup/reload is silent; gaps, resets, or old writers dropping metadata cause conservative resynchronization and a diagnostic. This is bounded delivery, not unlimited backlog replay.

@@ -86,6 +86,38 @@ GNOME's native sound player handles playback; `paplay` is unnecessary. Sound vol
 
 One sound is selected per one-second burst, with priority error, permission, decision, completion. Individual visual notices are preserved. Missing sounds or an unavailable audio backend do not stop state tracking or block the agent.
 
+## Account quota and session context
+
+The companion can retain optional numeric quota/context snapshots in the local state file. Collection defaults to off. Configure the source switches in `$XDG_CONFIG_HOME/agent-status-indicator/usage.json` (normally `~/.config/agent-status-indicator/usage.json`):
+
+```json
+{
+  "codex_metadata": false,
+  "claude_statusline": false
+}
+```
+
+Enable only the sources you want. Disabling a source stops future reads; existing numeric snapshots remain until replaced or the cache is cleared.
+
+**Codex:** set `codex_metadata` to `true` after installing the updated companion and lifecycle hooks. Each supported hook may read at most 64 KiB from the header and 256 KiB from the tail of its supplied session file. The file must be a matching regular JSONL session under `$CODEX_HOME/sessions` (default `~/.codex/sessions`). No directory scan, unbounded history traversal, daemon or account request is used. These files also contain conversation text; only numeric usage metadata is retained.
+
+The adapter recognizes `event_msg/token_count` records, uses `last_token_usage.total_tokens / model_context_window` for an approximate context percentage, and accepts the shared Codex primary/secondary quota windows. It never divides accumulated lifetime usage by the context window or combines session quota percentages. Specialized model-limit buckets are not displayed as shared account quota. Codex's terminal may show a different context percentage because it adjusts for reserved prompt/tool capacity. The [Codex hooks reference](https://learn.chatgpt.com/docs/hooks) warns that transcript format is unstable; incompatible versions, large/incomplete records, missing paths or unavailable metadata leave usage hidden.
+
+**Claude Code:** set `claude_statusline` to `true`, then opt into the [official status-line interface](https://code.claude.com/docs/en/statusline). Merge this property into your existing Claude settings without replacing unrelated settings:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "agent-status-hook --agent claude --status-line"
+  }
+}
+```
+
+The adapter displays a compact context line in the terminal and sends only usage metadata to an already known session. Lifecycle hooks remain necessary. If you already have a custom status-line command, preserve it with `--status-line-command 'your existing command'`, quoting that command as a single shell argument and escaping it appropriately inside JSON. The wrapper forwards the original JSON stdin and the existing command's stdout; its foreground execution is bounded to two seconds. On Linux/POSIX, timeout or termination also stops its owned command process group. Keep existing status-line options such as padding. The adapter does not modify Claude configuration automatically.
+
+Claude supplies context percentage directly. Five-hour/seven-day quota fields depend on account/version support and may be absent until an API response. Unsupported accounts and missing windows remain unavailable.
+
 ## Missing, corrupt, or orphaned state
 
 The extension watches the state file's parent directory and relevant ancestor, including atomic renames and directory recreation. It does not periodically poll state. Reads are asynchronous and limited to 1 MiB for state and 64 KiB for preferences. Parse/read failures retain valid session data and display a diagnostic. A missing state file displays setup guidance.

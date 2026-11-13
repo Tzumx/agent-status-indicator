@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import os
 import runpy
+import signal
+import stat
+import subprocess
 import sys
 import time
 from pathlib import Path
 
-from agent_status_state import label
+from agent_status_state import label, usage_snapshot
 
 EVENT_TO_STATE = {
     "SessionStart": "idle", "SessionEnd": "idle", "Interrupt": "idle",
@@ -103,14 +107,187 @@ def state_for_event(event: str, payload: dict, agent: str = "") -> str | None:
     return EVENT_TO_STATE.get(event)
 
 
+USAGE_HEAD_BYTES = 65536
+USAGE_TAIL_BYTES = 262144
+USAGE_LINE_BYTES = 65536
+
+
+def usage_enabled(source: str) -> bool:
+    path = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "agent-status-indicator" / "usage.json"
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return False
+            raw = stream.read(4097)
+        config = json.loads(raw) if len(raw) <= 4096 else None
+        return isinstance(config, dict) and config.get(source) is True
+    except (OSError, ValueError, RecursionError):
+        return False
+
+
+def object_value(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def codex_usage(payload: dict, session_id: str, observed: float) -> dict:
+    if not usage_enabled("codex_metadata"):
+        return {}
+    raw_path = payload.get("transcript_path") or payload.get("transcriptPath")
+    if not isinstance(raw_path, str) or not raw_path:
+        return {}
+    try:
+        root = (Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "sessions").resolve()
+        path = Path(raw_path)
+        if not path.is_absolute() or path.suffix != ".jsonl" or path.is_symlink():
+            return {}
+        path = path.resolve()
+        path.relative_to(root)
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or (hasattr(os, "getuid") and info.st_uid != os.getuid()):
+                return {}
+            head = stream.read(USAGE_HEAD_BYTES)
+            first, separator, _ = head.partition(b"\n")
+            if not separator:
+                return {}
+            meta = json.loads(first)
+            if (not isinstance(meta, dict) or meta.get("type") != "session_meta"
+                    or object_value(meta.get("payload")).get("id") != session_id.removeprefix("codex:")):
+                return {}
+            start = max(0, info.st_size - USAGE_TAIL_BYTES)
+            stream.seek(start)
+            tail = stream.read(USAGE_TAIL_BYTES)
+        if start:
+            tail = tail.partition(b"\n")[2]  # Ignore the first, possibly partial, record.
+        snapshot = {}
+        for line in tail.splitlines(keepends=True):
+            if (not line.endswith(b"\n") or len(line) > USAGE_LINE_BYTES
+                    or b'"token_count"' not in line or b'"event_msg"' not in line):
+                continue
+            try:
+                record = json.loads(line)
+                event = object_value(record.get("payload"))
+                if record.get("type") != "event_msg" or event.get("type") != "token_count":
+                    continue
+                date = datetime.fromisoformat(record["timestamp"].replace("Z", "+00:00"))
+                if date.tzinfo is None:
+                    continue
+                updated = date.timestamp()
+                if not 0 < updated <= observed:
+                    continue
+                info = object_value(event.get("info"))
+                last = object_value(info.get("last_token_usage"))
+                total, window = last.get("total_tokens"), info.get("model_context_window")
+                candidate = {}
+                # Use the latest model request, never accumulated lifetime tokens.
+                if type(total) is int and type(window) is int and 0 <= total and window > 0:
+                    candidate["context"] = {"used_percent": min(100, total / window * 100), "updated_at": updated}
+                limits = event.get("rate_limits")
+                if isinstance(limits, dict) and limits.get("limit_id") in (None, "codex"):
+                    candidate["quota"] = {"updated_at": updated, "windows": [
+                        limits[key] for key in ("primary", "secondary") if isinstance(limits.get(key), dict)]}
+                for kind, item in usage_snapshot(candidate).items():
+                    if item["updated_at"] >= snapshot.get(kind, {}).get("updated_at", 0):
+                        snapshot[kind] = item
+            except (ValueError, KeyError, TypeError, AttributeError, OverflowError, RecursionError):
+                continue
+        return snapshot
+    except (OSError, ValueError, RecursionError):
+        return {}
+
+
+def claude_usage(payload: dict, observed: float) -> dict:
+    context = object_value(payload.get("context_window"))
+    limits = object_value(payload.get("rate_limits"))
+    value = {"context": {"used_percent": context.get("used_percentage"), "updated_at": observed}}
+    if isinstance(payload.get("rate_limits"), dict):
+        windows = []
+        for key, minutes in (("five_hour", 300), ("seven_day", 10080)):
+            item = object_value(limits.get(key))
+            windows.append({"used_percent": item.get("used_percentage"), "window_minutes": minutes,
+                            "resets_at": item.get("resets_at")})
+        value["quota"] = {"updated_at": observed, "windows": windows}
+    return usage_snapshot(value)
+
+
+def run_status_line_command(command: str, raw: str) -> int:
+    def interrupted(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    previous_handler = None
+    if os.name == "posix":
+        previous_handler = signal.signal(signal.SIGTERM, interrupted)
+    try:
+        with subprocess.Popen(command, shell=True, stdin=subprocess.PIPE, text=True,
+                              stderr=subprocess.DEVNULL, start_new_session=os.name == "posix") as process:
+            try:
+                process.communicate(raw, timeout=2)
+                return process.returncode
+            except subprocess.TimeoutExpired:
+                return 0
+            finally:
+                if process.poll() is None:
+                    try:
+                        if os.name == "posix":
+                            os.killpg(process.pid, signal.SIGKILL)
+                        else:
+                            process.kill()
+                    except ProcessLookupError:
+                        pass
+    finally:
+        if os.name == "posix":
+            signal.signal(signal.SIGTERM, previous_handler)
+
+
+def status_line(command: str, observed: float) -> int:
+    raw = sys.stdin.read(1048577)
+    try:
+        payload = json.loads(raw) if len(raw) <= 1048576 else {}
+        if not isinstance(payload, dict):
+            payload = {}
+        snapshot = claude_usage(payload, observed)
+        session_id = payload_session_id(payload, "claude")
+        if (usage_enabled("claude_statusline") and session_id and len(session_id) <= 1024
+                and all(char.isprintable() for char in session_id)):
+            try:
+                update = runpy.run_path(str(Path(__file__).resolve().parent / "agent-status"))["apply_usage"]
+                update("claude", session_id, snapshot, observed)
+            except (OSError, ValueError, TimeoutError):
+                pass
+        if not command:
+            context = snapshot.get("context")
+            print(f"Context {context['used_percent']:.0f}%" if context else "Context unavailable")
+    except (ValueError, RecursionError):
+        if not command:
+            print("Context unavailable")
+    if command:
+        # The user explicitly supplies their existing status-line shell command.
+        # Forward its original stdin/stdout without persisting the payload.
+        try:
+            return run_status_line_command(command, raw)
+        except OSError:
+            return 0
+    return 0
+
+
 def main() -> int:
     observed_at = time.time()
     parser = argparse.ArgumentParser()
     parser.add_argument("--agent", choices=["codex", "claude"], required=True)
-    parser.add_argument("--event", required=True)
+    parser.add_argument("--event")
+    parser.add_argument("--status-line", action="store_true", help="Read Claude Code status-line metadata")
+    parser.add_argument("--status-line-command", default="", help="Preserve an existing status-line shell command")
     parser.add_argument("--state", choices=["idle", "working", "approval", "error"])
     parser.add_argument("--session", default="")
     args = parser.parse_args()
+    if args.status_line:
+        if args.agent != "claude" or args.event:
+            parser.error("--status-line requires --agent claude and no --event")
+        return status_line(args.status_line_command, observed_at)
+    if not args.event or args.status_line_command:
+        parser.error("--event is required; --status-line-command requires --status-line")
     payload = parse_stdin()
     state = args.state or state_for_event(args.event, payload, args.agent)
     if state is None:
@@ -135,8 +312,9 @@ def main() -> int:
     try:
         update = runpy.run_path(str(status_cli))["apply_update"]
         legacy_id = legacy_session_from_payload(payload, args.agent) if not args.session else ""
+        usage = codex_usage(payload, session_id, observed_at) if args.agent == "codex" else {}
         update(args.agent, state, args.event, session_id, args.event, turn_id, observed_at,
-               project, action_id, "decision" if decision else "", legacy_id)
+               project, action_id, "decision" if decision else "", legacy_id, usage)
     except (OSError, ValueError, TimeoutError) as exc:
         print(f"agent-status-hook: {type(exc).__name__}; update ignored", file=sys.stderr)
         return 1
