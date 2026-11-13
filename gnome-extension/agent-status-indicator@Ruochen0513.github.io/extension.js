@@ -377,7 +377,7 @@ export default class AgentStatusExtension extends Extension {
     _render() {
         this._quotaTimer?.update(this._lastState, this._preferences);
         const {status} = summarize(this._lastState);
-        const rows = sessionRows(this._lastState);
+        const rows = sessionRows(this._lastState, this._preferences.show_closed_sessions);
         let visible = this._stateError ? 'error' : status;
         if (visible === 'idle' && rows.some(row => row.state === 'finished'))
             visible = 'finished';

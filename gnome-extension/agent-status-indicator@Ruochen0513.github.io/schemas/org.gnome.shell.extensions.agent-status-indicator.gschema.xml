@@ -65,6 +65,10 @@
       <default>false</default>
       <summary>Show empty agent groups</summary>
     </key>
+    <key name="show-closed-sessions" type="b">
+      <default>false</default>
+      <summary>Show sessions after a confirmed exit</summary>
+    </key>
     <key name="show-state-counts" type="b">
       <default>true</default>
       <summary>Show overview state counts</summary>

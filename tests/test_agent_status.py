@@ -240,6 +240,61 @@ class AgentStatusTests(unittest.TestCase):
         self.assertEqual(after["sessions"]["claude"], before["sessions"]["claude"])
         self.assertEqual(after["alerts"], before["alerts"])
 
+    def test_session_end_after_stop_retains_record_without_another_completion(self):
+        ts = time.time()
+        for agent in ("codex", "claude"):
+            for identified in (False, True):
+                with self.subTest(agent=agent, identified=identified):
+                    sid = str(identified)
+                    agent_status.apply_update(agent, "working", session_id=sid,
+                                              event="UserPromptSubmit", turn_id="turn", observed_at=ts)
+                    before = agent_status.apply_update(agent, "idle", session_id=sid,
+                                                       event="Stop", turn_id="turn", observed_at=ts + 1)
+                    after = agent_status.apply_update(agent, "idle", session_id=sid,
+                                                      event="SessionEnd", turn_id="turn" if identified else "",
+                                                      observed_at=ts + 2)
+                    record = after["sessions"][agent][sid]
+                    self.assertEqual(record["event"], "SessionEnd")
+                    self.assertEqual(record["state"], "idle")
+                    self.assertEqual(record["turn_id"], "turn")
+                    self.assertEqual(record["seen_alerts"], before["sessions"][agent][sid]["seen_alerts"])
+                    self.assertEqual(after["alerts"], before["alerts"])
+
+    def test_ended_session_rejects_late_events_without_a_start_boundary(self):
+        ts = time.time()
+        previous = {"state": "idle", "event": "SessionEnd", "turn_id": "ended", "updated_at": ts}
+        for event, state in (("PreToolUse", "working"), ("PostToolUse", "working"),
+                             ("PermissionRequest", "approval"), ("Stop", "idle"),
+                             ("Error", "error"), ("Interrupt", "idle")):
+            for turn in ("", "ended", "unseen"):
+                with self.subTest(event=event, turn=turn):
+                    result = agent_status.transition_session(previous, state, "", event, turn, ts + 1)
+                    self.assertIsNone(result)
+
+    def test_ended_session_resumes_and_keeps_other_sessions(self):
+        for agent in ("codex", "claude"):
+            for boundary in ("SessionStart", "UserPromptSubmit", "PreModelRequest"):
+                if agent == "claude" and boundary == "PreModelRequest":
+                    continue
+                with self.subTest(agent=agent, boundary=boundary):
+                    sid = boundary
+                    agent_status.apply_update(agent, "working", session_id="other",
+                                              event="UserPromptSubmit", turn_id="other", project="shared")
+                    agent_status.apply_update(agent, "working", session_id=sid,
+                                              event="UserPromptSubmit", turn_id="old", project="shared")
+                    before = agent_status.apply_update(agent, "idle", session_id=sid,
+                                                       event="SessionEnd", turn_id="old")
+                    after = agent_status.apply_update(agent, "idle" if boundary == "SessionStart" else "working",
+                                                      session_id=sid, event=boundary,
+                                                      turn_id="" if boundary == "SessionStart" else "new")
+                    record = after["sessions"][agent][sid]
+                    self.assertEqual(record["event"], boundary)
+                    self.assertIn("old", record["retired_turns"])
+                    self.assertEqual(after["sessions"][agent]["other"], before["sessions"][agent]["other"])
+                    self.assertEqual(after["alerts"], before["alerts"])
+                    late = agent_status.apply_update(agent, "idle", session_id=sid, event="Stop", turn_id="old")
+                    self.assertEqual(late["sessions"][agent][sid], record)
+
     def test_agent_reset_does_not_clear_other_agent(self):
         agent_status.apply_update("codex", "working", session_id="c1")
         agent_status.apply_update("claude", "working", session_id="c2")

@@ -50,10 +50,11 @@ def transition_session(previous: dict, state: str, message: str, event: str,
         return None  # Replayed prompts must not reopen a blocked or stopped turn.
     if event == "SessionStart" and previous.get("state") in {"working", "approval", "error"}:
         return None
-    if (event and event not in {"UserPromptSubmit", "PreModelRequest", "SessionStart"}
+    if (event and event not in {"UserPromptSubmit", "PreModelRequest", "SessionStart", "SessionEnd"}
             and previous.get("state") == "idle"
             and previous.get("event") in {"Stop", "Interrupt", "SessionEnd", "Reset"}
-            and turn_id and turn_id == previous_turn):
+            and ((turn_id and turn_id == previous_turn)
+                 or (previous.get("event") == "SessionEnd" and event != "Reset"))):
         return None
     if previous.get("state") == "approval":
         if event == "PreToolUse":

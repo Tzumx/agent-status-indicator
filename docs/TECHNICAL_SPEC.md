@@ -66,6 +66,7 @@ Show one compact icon in the right status area of the GNOME top bar, before the 
 - Separate groups for Claude Code and Codex; hide empty groups by default, with a preference to show them.
 - One row per session with a project name, independently visible status and short stable session identifier, and a timestamp. Last-event descriptions are optional to avoid repeating the status.
 - Distinct rows when two sessions share the same working directory or project name.
+- Hide sessions with a confirmed `SessionEnd` by default, retaining their internal replay guards. **Display → Show closed sessions** reveals them as Closed. A stopped response remains visible while its CLI stays open; interruption or silence alone must not hide a session.
 - Recovery controls hidden by default, exposed explicitly through **Troubleshooting → Show reset controls** for stale or orphaned sessions. The user reviews and executes a session-specific reset command in a terminal; the extension does not execute resets.
 
 An illustrative menu (not a required visual layout):
@@ -128,7 +129,7 @@ Default priority for overall display: `error` > `permission/decision required` >
 - Allow global mute, independent sound/notification toggles for each event category, local OGG/OGA/WAV selection, and restoration of the system theme sound.
 - Use native GSettings keys for editable preferences, preserving existing `gnome.json` values as read-only fallbacks until each setting is explicitly changed.
 - Put one-time hook setup help on an Integration page, rather than exposing setup as a routine status-menu action.
-- Provide a Circle/Robot head panel-icon selector and Display switches for empty groups, overview counts, event descriptions, account quota and session context usage.
+- Provide a Circle/Robot head panel-icon selector and Display switches for empty groups, closed sessions, overview counts, event descriptions, account quota and session context usage.
 - Provide separate opt-in usage-source switches on Integration and independent quota-reset notification/sound controls on Alerts.
 - Keep settings pages extensible without moving session parsing or lifecycle semantics into the UI.
 - Distinguish idle, working, waiting, finished and error through text and the documented icon colors.

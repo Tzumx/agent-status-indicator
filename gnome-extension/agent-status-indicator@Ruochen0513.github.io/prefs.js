@@ -106,6 +106,7 @@ export default class AgentStatusPreferences extends ExtensionPreferences {
         display.add(usage);
         for (const [name, title, subtitle] of [
             ['show_empty_agents', 'Show empty agent groups', 'Keep a group visible even when it has no sessions.'],
+            ['show_closed_sessions', 'Show closed sessions', 'Keep sessions visible after a confirmed exit.'],
             ['show_state_counts', 'Show state counts', 'Show the overall state distribution above the session list.'],
             ['show_event_details', 'Show last-event details', 'Include the event description beside each session timestamp.'],
             ['show_account_usage', 'Show account quota', 'Show available quota percentages once per agent group.'],

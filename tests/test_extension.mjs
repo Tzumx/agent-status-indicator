@@ -316,6 +316,25 @@ assert.equal(rows.find(row => row.session === 'a').project, 'demo');
 assert.equal(rows.find(row => row.session === 'b').state, 'finished');
 assert.equal(rows.find(row => row.session === 'c').state, 'decision');
 assert.equal(new Set(rows.map(row => row.short)).size, 3);
+const exitState = {sessions: {codex: {
+    closed: {state: 'idle', event: 'SessionEnd', project: 'shared'},
+    finished: {state: 'idle', event: 'Stop', project: 'shared'},
+    interrupted: {state: 'idle', event: 'Interrupt'},
+}, claude: {
+    closed: {state: 'idle', event: 'SessionEnd'},
+    ready: {state: 'idle', event: 'SessionStart'},
+}}};
+const exitSnapshot = JSON.stringify(exitState);
+assert.equal(sessionRows(exitState).length, 3, 'only confirmed exits are hidden by default');
+assert.equal(sessionRows(exitState).filter(row => row.state === 'finished').length, 1,
+    'finished responses stay visible while the CLI is open');
+const historyRows = sessionRows(exitState, true);
+assert.equal(historyRows.length, 5);
+assert.equal(historyRows.filter(row => row.state === 'closed').length, 2);
+assert.equal(sessionSummary(historyRows).counts.closed, 2);
+assert.equal(JSON.stringify(exitState), exitSnapshot, 'visibility never removes internal records');
+assert.equal(preferences().show_closed_sessions, false);
+assert.throws(() => preferences({show_closed_sessions: 'true'}));
 assert.equal(preferences({sounds: {error: false}}).notifications.error, true);
 assert.equal(preferences({sounds: {error: false}}).sounds.error, false);
 assert.equal(preferences({sound_files: {error: 'relative.wav'}}).sound_files.error, undefined);
@@ -873,9 +892,44 @@ assert.equal(lifecycle._notices.size, 0, 'a real recovery clears the error after
 assert(!unrelatedNotice.destroyed, 'another extension notification stays untouched');
 unrelatedSource.destroy();
 lifecycle.destroy();
+const closeNotices = new alertsModule.namespace.Alerts(message => assert.fail(message));
+const closeEvents = [event(1, 'completion', 'ending'), event(2, 'permission', 'waiting')];
+const closeNoticeState = log(2, closeEvents);
+const closeConfig = preferences({sounds: {completion: false, permission: false}});
+closeNotices.dispatch(closeEvents, closeConfig, closeNoticeState);
+const endingNotice = closeNotices._notices.get(JSON.stringify(['codex', 'ending'])).notification;
+const waitingNotice = closeNotices._notices.get(JSON.stringify(['codex', 'waiting'])).notification;
+closeNoticeState.sessions.codex.ending.event = 'SessionEnd';
+closeNotices.dispatch([], closeConfig, closeNoticeState);
+assert(endingNotice.destroyed, 'a confirmed exit removes its obsolete completion notice');
+assert(!waitingNotice.destroyed, 'another session permission notice remains unresolved');
+assert.equal(closeNotices._notices.size, 1);
+assert.equal(sessionRows(closeNoticeState, true).find(row => row.session === 'ending').state, 'closed');
+closeNotices.dispatch([], preferences({...closeConfig, show_closed_sessions: true}), closeNoticeState);
+assert.equal(closeNotices._notices.size, 1, 'revealing closed rows never replays their notices');
+closeNotices.destroy();
 // Display settings are independent of lifecycle and notifications.
 instance.enable();
 await settle();
+instance._lastState = exitState;
+instance._render();
+const preservedFinishedId = instance._rowWidgets.get(JSON.stringify(['codex', 'finished'])).identity.text;
+assert.equal(instance._rowWidgets.size, 3);
+assert.equal(instance._summary.label.text, '3 sessions');
+settings.set_boolean('show-closed-sessions', true);
+assert.equal(instance._rowWidgets.size, 5);
+assert.equal(instance._rowWidgets.get(JSON.stringify(['claude', 'closed'])).status.text, 'Closed');
+assert.equal(instance._metrics.get('closed').count.text, '2');
+settings.reset('show-closed-sessions');
+assert.equal(instance._rowWidgets.size, 3);
+assert.equal(instance._rowWidgets.get(JSON.stringify(['codex', 'finished'])).identity.text, preservedFinishedId);
+assert.equal(instance._rowWidgets.get(JSON.stringify(['codex', 'finished'])).status.text, 'Finished responding');
+assert.equal(instance._lastState, exitState);
+instance._lastState = {sessions: {codex: {closed: {state: 'idle', event: 'SessionEnd'}}}};
+instance._render();
+assert.equal(instance._summary.label.text, 'No sessions');
+assert.equal(instance._sessions.visible, false);
+assert.equal(instance._groupWidgets.size, 0);
 instance._lastState = {sessions: {codex: {}, claude: {}}};
 instance._render();
 assert.equal(instance._sessions.visible, false);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Presentation only: lifecycle events, never elapsed time, determine status.
 export const PRIORITY = {idle: 0, working: 1, approval: 2, error: 3};
-export const COLORS = {idle: '#8b949e', working: '#2ea043', approval: '#d29922', error: '#f85149', finished: '#62a0ea'};
+export const COLORS = {idle: '#8b949e', working: '#2ea043', approval: '#d29922', error: '#f85149', finished: '#62a0ea', closed: '#8b949e'};
 
 export function summarize(state) {
     if (!state || typeof state !== 'object' || Array.isArray(state))
@@ -35,23 +35,24 @@ export function summarize(state) {
 // UI detail does not change the four-state protocol used by other clients.
 export const STATUS_LABELS = {
     idle: 'Idle', working: 'Working', approval: 'Permission required',
-    decision: 'Decision required', finished: 'Finished responding', error: 'Error',
+    decision: 'Decision required', finished: 'Finished responding', error: 'Error', closed: 'Closed',
 };
-export const DISPLAY_PRIORITY = {...PRIORITY, finished: 0.5, decision: 2};
+export const DISPLAY_PRIORITY = {...PRIORITY, finished: 0.5, decision: 2, closed: -1};
 export const AGENT_LABELS = {codex: 'Codex', claude: 'Claude Code'};
 
 export const STATUS_ICONS = {
     idle: 'media-record-symbolic', working: 'media-playback-start-symbolic',
     approval: 'dialog-password-symbolic', decision: 'dialog-question-symbolic',
-    finished: 'emblem-ok-symbolic', error: 'dialog-error-symbolic',
+    finished: 'emblem-ok-symbolic', error: 'dialog-error-symbolic', closed: 'window-close-symbolic',
 };
 export const SUMMARY_LABELS = {
     error: 'Errors', approval: 'Waiting for permission', decision: 'Waiting for your decision',
-    working: 'Working', finished: 'Finished responding', idle: 'Idle',
+    working: 'Working', finished: 'Finished responding', idle: 'Idle', closed: 'Closed',
 };
 export const PANEL_ICONS = {circle: 'Circle', robot: 'Robot head'};
 export const DISPLAY_SETTINGS = {
     show_empty_agents: ['show-empty-agents', false],
+    show_closed_sessions: ['show-closed-sessions', false],
     show_state_counts: ['show-state-counts', true],
     show_event_details: ['show-event-details', false],
     show_account_usage: ['show-account-usage', true],
@@ -99,6 +100,8 @@ export function shortId(value) {
 }
 
 export function displayState(item) {
+    if (item.state === 'idle' && item.event === 'SessionEnd')
+        return 'closed';
     if (item.state === 'approval' && item.attention === 'decision')
         return 'decision';
     if (item.state === 'idle' && item.event === 'Stop')
@@ -106,7 +109,7 @@ export function displayState(item) {
     return item.state;
 }
 
-export function sessionRows(state) {
+export function sessionRows(state, showClosed = false) {
     summarize(state);
     const rows = [];
     for (const agent of ['claude', 'codex']) {
@@ -116,6 +119,8 @@ export function sessionRows(state) {
             continue;
         for (const [session, item] of Object.entries(sessions)) {
             if (!item || typeof item.state !== 'string' || !Object.hasOwn(PRIORITY, item.state))
+                continue;
+            if (showClosed !== true && item.state === 'idle' && item.event === 'SessionEnd')
                 continue;
             rows.push({
                 agent, session, short: shortId(session),

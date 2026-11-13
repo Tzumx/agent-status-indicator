@@ -26,6 +26,8 @@ Each agent group shows up to fifty sessions per page with **Previous sessions** 
 
 When opened, the menu fits the available width of the indicator’s monitor. Long project names are shortened while separate session identifiers and status labels remain visible. Keyboard focus scrolls session rows and paging controls into view. When recovery controls are shown, focus moves to each row's reset button.
 
+A confirmed `SessionEnd` hides that session immediately. **Settings → Display → Show closed sessions** reveals retained entries with a **Closed** label. A normal `Stop` still shows **Finished responding** while the CLI remains open, and an interruption does not establish that the session closed. Closing a session removes neither another session nor the internal record: replay guards remain until normal idle-record pruning, and a later explicit start can show the session again. A force-killed process may emit no exit hook and still needs the manual recovery described below.
+
 The persistent protocol retains `idle`, `working`, `approval`, and `error`. GNOME derives **Decision required** from optional approval metadata and **Finished responding** only from a confirmed normal `Stop`. Session initialization, interruption, reset, and process exit alone never establish successful response completion.
 
 Claude Code's `AskUserQuestion` and `ExitPlanMode` tool-start events indicate explicit decisions. Codex currently uses supported permission and lifecycle events; ordinary text questions are not detected as decisions.
@@ -46,7 +48,7 @@ Under **Alerts**, expand an event category to enable its desktop notification an
 
 **Display → Panel icon** selects **Circle** (default) or **Robot head**. Both keep the same status colors and update immediately in a loaded version supporting this setting. The robot is a bundled symbolic SVG, so it does not depend on a theme providing a robot icon.
 
-**Display** also controls empty agent groups, state counts, last-event descriptions, account quota and per-session context usage.
+**Display** also controls empty agent groups, closed sessions, state counts, last-event descriptions, account quota and per-session context usage.
 
 **Integration** controls optional usage collection, explains the one-time companion/hook setup and links to the setup guide. Its presence is help, not a diagnosis that hooks are missing. The status menu does not modify agent configuration.
 
