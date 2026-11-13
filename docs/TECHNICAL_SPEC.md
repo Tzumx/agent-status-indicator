@@ -60,7 +60,7 @@ This is a downstream extension of an active upstream codebase, not a replacement
 
 ### 4.1 Top-bar indicator
 
-Show one compact icon in the right status area of the GNOME top bar, before the system controls. Its color/state reflects the highest-priority session requiring attention. The menu opens on click and shows:
+Show one compact icon in the right status area of the GNOME top bar, before the system controls. Its color/state reflects the highest-priority session requiring attention. Settings → Display offers Circle (the default) or a bundled symbolic Robot head; both use the same status colors and accessible state text. The menu opens on click and shows:
 
 - A session-count headline and optional separate labeled counts by state, omitting empty categories.
 - Separate groups for Claude Code and Codex; hide empty groups by default, with a preference to show them.
@@ -128,7 +128,7 @@ Default priority for overall display: `error` > `permission/decision required` >
 - Allow global mute, independent sound/notification toggles for each event category, local OGG/OGA/WAV selection, and restoration of the system theme sound.
 - Use native GSettings keys for editable preferences, preserving existing `gnome.json` values as read-only fallbacks until each setting is explicitly changed.
 - Put one-time hook setup help on an Integration page, rather than exposing setup as a routine status-menu action.
-- Provide Display switches for empty groups, overview counts, event descriptions, account quota and session context usage.
+- Provide a Circle/Robot head panel-icon selector and Display switches for empty groups, overview counts, event descriptions, account quota and session context usage.
 - Provide separate opt-in usage-source switches on Integration and independent quota-reset notification/sound controls on Alerts.
 - Keep settings pages extensible without moving session parsing or lifecycle semantics into the UI.
 - Distinguish idle, working, waiting, finished and error through text and the documented icon colors.

@@ -42,7 +42,9 @@ Choose **Settings…** in the indicator menu, or use the preferences button in G
 
 Under **Alerts**, expand an event category to enable its desktop notification and sound independently. Use the file button to choose a local OGG, OGA or WAV sound, and the undo button to restore the system theme sound. **Mute all alerts** suppresses both notifications and sounds. Changes apply immediately to the loaded version supporting these settings; a Shell code update still requires the next normal login.
 
-**Display** controls empty agent groups, state counts, last-event descriptions, account quota and per-session context usage.
+**Display → Panel icon** selects **Circle** (default) or **Robot head**. Both keep the same status colors and update immediately in a loaded version supporting this setting. The robot is a bundled symbolic SVG, so it does not depend on a theme providing a robot icon.
+
+**Display** also controls empty agent groups, state counts, last-event descriptions, account quota and per-session context usage.
 
 **Integration** controls optional usage collection, explains the one-time companion/hook setup and links to the setup guide. Its presence is help, not a diagnosis that hooks are missing. The status menu does not modify agent configuration.
 

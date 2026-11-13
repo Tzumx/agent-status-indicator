@@ -77,6 +77,11 @@ export default class AgentStatusExtension extends Extension {
                 this._constrainMenuWidth();
             }
         });
+        this._panelIcons = {
+            circle: new Gio.ThemedIcon({name: 'media-record-symbolic'}),
+            robot: new Gio.FileIcon({file: this.dir.get_child('robot-head-symbolic.svg')}),
+        };
+        this._panelIcon = null;
         this._dot = new St.Icon({
             icon_name: 'media-record-symbolic', icon_size: 14,
             style_class: 'system-status-icon', y_align: Clutter.ActorAlign.CENTER,
@@ -153,6 +158,8 @@ export default class AgentStatusExtension extends Extension {
         this._button?.destroy();
         this._button = null;
         this._dot = null;
+        this._panelIcons = null;
+        this._panelIcon = null;
         this._summary = null;
         this._detail = null;
         this._sessions = null;
@@ -380,6 +387,10 @@ export default class AgentStatusExtension extends Extension {
         const description = [this._stateError,
             this._missing ? 'Waiting for agent status. Open Settings → Integration for setup help.' : '',
             this._configError, this._alertWarning].filter(Boolean).join('\n');
+        if (this._panelIcon !== this._preferences.panel_icon) {
+            this._panelIcon = this._preferences.panel_icon;
+            this._dot.gicon = this._panelIcons[this._panelIcon];
+        }
         this._dot.set_style(`color: ${COLORS[visible === 'decision' ? 'approval' : visible] || COLORS.idle};`);
         const countText = Object.entries(counts).filter(([, count]) => count > 0)
             .map(([state, count]) => `${SUMMARY_LABELS[state]}: ${count}`).join('. ');

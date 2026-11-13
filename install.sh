@@ -98,6 +98,7 @@ install -m 0644 "$ROOT/gnome-extension/agent-status-indicator@Ruochen0513.github
 install -m 0644 "$ROOT/gnome-extension/agent-status-indicator@Ruochen0513.github.io/io.js" "$EXTENSION_DIR/io.js"
 install -m 0644 "$ROOT/gnome-extension/agent-status-indicator@Ruochen0513.github.io/prefs.js" "$EXTENSION_DIR/prefs.js"
 install -m 0644 "$ROOT/gnome-extension/agent-status-indicator@Ruochen0513.github.io/stylesheet.css" "$EXTENSION_DIR/stylesheet.css"
+install -m 0644 "$ROOT/gnome-extension/agent-status-indicator@Ruochen0513.github.io/robot-head-symbolic.svg" "$EXTENSION_DIR/robot-head-symbolic.svg"
 install -m 0644 "$ROOT/LICENSE" "$EXTENSION_DIR/LICENSE"
 mkdir -p "$EXTENSION_DIR/schemas"
 install -m 0644 "$ROOT/gnome-extension/agent-status-indicator@Ruochen0513.github.io/schemas/org.gnome.shell.extensions.agent-status-indicator.gschema.xml" "$EXTENSION_DIR/schemas/"

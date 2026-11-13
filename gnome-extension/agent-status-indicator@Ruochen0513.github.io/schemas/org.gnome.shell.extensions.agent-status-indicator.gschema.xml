@@ -53,6 +53,14 @@
       <default>''</default>
       <summary>Custom sound file for error</summary>
     </key>
+    <key name="panel-icon" type="s">
+      <choices>
+        <choice value="circle"/>
+        <choice value="robot"/>
+      </choices>
+      <default>'circle'</default>
+      <summary>Panel indicator icon</summary>
+    </key>
     <key name="show-empty-agents" type="b">
       <default>false</default>
       <summary>Show empty agent groups</summary>

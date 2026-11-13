@@ -26,6 +26,7 @@ class PackageTests(unittest.TestCase):
             archive.write(EXTENSION / 'io.js', 'io.js')
             archive.write(EXTENSION / 'prefs.js', 'prefs.js')
             archive.write(EXTENSION / 'stylesheet.css', 'stylesheet.css')
+            archive.write(EXTENSION / 'robot-head-symbolic.svg', 'robot-head-symbolic.svg')
             archive.write(EXTENSION / 'schemas/org.gnome.shell.extensions.agent-status-indicator.gschema.xml', 'schemas/org.gnome.shell.extensions.agent-status-indicator.gschema.xml')
             archive.write(ROOT / 'LICENSE', 'LICENSE')
             if extra:

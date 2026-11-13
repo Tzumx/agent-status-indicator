@@ -328,7 +328,7 @@ Prepare the GNOME Extensions submission archive (requires Python 3 and either `g
 ./scripts/package-extension.sh
 ```
 
-The archive contains the GNOME JavaScript client and preferences, stylesheet, GSettings schema, and MIT license. The companion and hooks require separate installation; the extension shows setup guidance until it receives state. See [GNOME submission notes](docs/gnome-submission.md) for listing text, reviewer notes, verification and the remaining human submission steps.
+The archive contains the GNOME JavaScript client and preferences, stylesheet, symbolic icon, GSettings schema, and MIT license. The companion and hooks require separate installation; the extension shows setup guidance until it receives state. See [GNOME submission notes](docs/gnome-submission.md) for listing text, reviewer notes, verification and the remaining human submission steps.
 
 See [validation and measurements](docs/validation.md) for native GIO coverage, the isolated hook benchmark, and required GNOME 46/50 desktop checks.
 

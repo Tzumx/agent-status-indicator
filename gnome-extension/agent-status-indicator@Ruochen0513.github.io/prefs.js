@@ -4,7 +4,7 @@ import Gtk from 'gi://Gtk';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
-import {ALERT_KINDS, SOUND_NAMES, STATUS_ICONS, preferences, settingsPreferences, safeText, DISPLAY_SETTINGS} from './state.js';
+import {ALERT_KINDS, SOUND_NAMES, STATUS_ICONS, preferences, settingsPreferences, safeText, DISPLAY_SETTINGS, PANEL_ICONS} from './state.js';
 import {readJson, writeJson} from './io.js';
 
 const CATEGORIES = {
@@ -89,6 +89,15 @@ export default class AgentStatusPreferences extends ExtensionPreferences {
 
         const display = new Adw.PreferencesPage({title: 'Display', icon_name: 'preferences-desktop-display-symbolic'});
         window.add(display);
+        const appearance = new Adw.PreferencesGroup({title: 'Panel indicator'});
+        display.add(appearance);
+        this._panelIcon = new Adw.ComboRow({
+            title: 'Panel icon', subtitle: 'Both shapes use the current status color.',
+            model: Gtk.StringList.new(Object.values(PANEL_ICONS)),
+        });
+        this._panelIcon.connect('notify::selected', () =>
+            this._save({panel_icon: Object.keys(PANEL_ICONS)[this._panelIcon.selected]}));
+        appearance.add(this._panelIcon);
         const sessions = new Adw.PreferencesGroup({title: 'Session list'});
         const usage = new Adw.PreferencesGroup({
             title: 'Usage', description: 'Show reported account quota per agent and context usage per session.',
@@ -253,6 +262,7 @@ export default class AgentStatusPreferences extends ExtensionPreferences {
         this._mute.sensitive = true;
         this._categories.sensitive = true;
         this._mute.active = value.mute_all;
+        this._panelIcon.selected = Object.keys(PANEL_ICONS).indexOf(value.panel_icon);
         for (const [name, row] of this._displayRows)
             row.active = value[name];
         for (const [kind, row] of this._rows) {
@@ -274,6 +284,8 @@ export default class AgentStatusPreferences extends ExtensionPreferences {
             let saved;
             if (group === 'mute_all') {
                 saved = this._settings.set_boolean('mute-all', values);
+            } else if (group === 'panel_icon') {
+                saved = this._settings.set_string('panel-icon', values);
             } else if (Object.hasOwn(DISPLAY_SETTINGS, group)) {
                 saved = this._settings.set_boolean(DISPLAY_SETTINGS[group][0], values);
             } else {

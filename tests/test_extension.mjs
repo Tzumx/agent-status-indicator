@@ -64,6 +64,7 @@ function file(path) {
     return {
         path,
         equal(other) { return path === other?.path; },
+        get_child(name) { return file(path + '/' + name); },
         get_parent() { return path === '/' ? null : file(path.slice(0, path.lastIndexOf('/')) || '/'); },
         query_exists() { return directories.has(path) || files.has(path); },
         monitor_directory() {
@@ -356,6 +357,8 @@ const imports = {
     }},
     'gi://Gio': {default: {
         Cancellable, IOErrorEnum: {NOT_FOUND: 1, EXISTS: 3, WRONG_ETAG: 4}, FileMonitorFlags: {WATCH_MOVES: 1},
+        ThemedIcon: class {constructor(props) { Object.assign(this, props); }},
+        FileIcon: class {constructor(props) { Object.assign(this, props); }},
         FileCreateFlags: {PRIVATE: 4}, FileCopyFlags: {NONE: 0}, File: {new_for_path: file},
         AppInfo: {launch_default_for_uri: url => openedUrls.push(url)},
     }},
@@ -397,7 +400,7 @@ const imports = {
         PopupBaseMenuItem: Actor, PopupMenuSection: Section, PopupSwitchMenuItem: SwitchMenuItem,
     },
     'resource:///org/gnome/shell/extensions/extension.js': {
-        Extension: class {getSettings() { return settings; } openPreferences() { preferencesOpened++; } uuid = 'test-extension'; metadata = {url: 'https://github.com/Ruochen0513/agent-status-indicator'};},
+        Extension: class {getSettings() { return settings; } openPreferences() { preferencesOpened++; } dir = file('/extension'); uuid = 'test-extension'; metadata = {url: 'https://github.com/Ruochen0513/agent-status-indicator'};},
     },
 };
 const ioModule = new vm.SourceTextModule(fs.readFileSync(new URL('io.js', base), 'utf8'), {context});
@@ -440,6 +443,15 @@ files.set(statePath, JSON.stringify({...log(1, [event(1)]), sessions: {codex: {s
 instance.enable();
 await settle();
 assert.equal(instance._dot.icon_size, 14);
+assert.equal(instance._dot.gicon.name, 'media-record-symbolic', 'circle remains the default');
+settings.set_string('panel-icon', 'robot');
+assert.equal(instance._dot.gicon.file.path, '/extension/robot-head-symbolic.svg');
+assert.match(instance._dot.style, /#2ea043/, 'switching shape keeps the current status color');
+settings.reset('panel-icon');
+assert.equal(instance._dot.gicon.name, 'media-record-symbolic', 'switching back restores the circle');
+assert.equal(preferences({panel_icon: 'robot'}).panel_icon, 'robot');
+for (const invalid of ['unknown', ['robot'], {}, null, false, 1])
+    assert.throws(() => preferences({panel_icon: invalid}));
 assert.match(instance._dot.style, /#2ea043/);
 assert.equal(sources.length, 0, 'no notification at startup');
 assert.equal(timers.size, 0, 'no periodic refresh source');
@@ -483,17 +495,21 @@ assert.equal(sounds.at(-1), '/tmp/error.wav', 'obsolete completion does not queu
 await updateState({...log(2, [event(2)]), sessions: {codex: {s: {state: 'idle', event: 'Stop'}}}});
 assert.match(instance._summary.text, /1 session/);
 assert.match(instance._dot.style, /#62a0ea/, 'finished responses use blue');
-for (const [status, eventName, attention, color] of [
-    ['working', 'UserPromptSubmit', '', COLORS.working], ['approval', 'PermissionRequest', '', COLORS.approval],
-    ['approval', 'PreToolUse', 'decision', COLORS.approval], ['error', 'Error', '', COLORS.error],
-    ['idle', 'Stop', '', COLORS.finished], ['idle', 'SessionStart', '', COLORS.idle],
-]) {
-    const previousState = instance._lastState;
-    instance._lastState = {sessions: {codex: {s: {state: status, event: eventName, attention}}}};
-    instance._render();
-    assert.equal(instance._dot.style, 'color: ' + color + ';');
-    instance._lastState = previousState;
+for (const icon of ['circle', 'robot']) {
+    settings.set_string('panel-icon', icon);
+    for (const [status, eventName, attention, color] of [
+        ['working', 'UserPromptSubmit', '', COLORS.working], ['approval', 'PermissionRequest', '', COLORS.approval],
+        ['approval', 'PreToolUse', 'decision', COLORS.approval], ['error', 'Error', '', COLORS.error],
+        ['idle', 'Stop', '', COLORS.finished], ['idle', 'SessionStart', '', COLORS.idle],
+    ]) {
+        const previousState = instance._lastState;
+        instance._lastState = {sessions: {codex: {s: {state: status, event: eventName, attention}}}};
+        instance._render();
+        assert.equal(instance._dot.style, 'color: ' + color + ';');
+        instance._lastState = previousState;
+    }
 }
+settings.reset('panel-icon');
 settings.set_boolean('sound-error', false);
 settings.set_string('sound-file-completion', '/tmp/custom.ogg');
 const overrides = model.namespace.settingsPreferences(settings, {sounds: {error: true, permission: false}});
@@ -891,9 +907,11 @@ settings.set_boolean('sound-error', true);
 instance._alerts.dispatch([event(1000, 'error', 'queued')], instance._preferences);
 const queuedBeforeDisplay = instance._alerts._pendingSound;
 assert(queuedBeforeDisplay);
+settings.set_string('panel-icon', 'robot');
 settings.set_boolean('show-state-counts', false);
 assert.equal(instance._alerts._pendingSound, queuedBeforeDisplay,
     'changing display choices must not discard an unrelated queued sound');
+settings.reset('panel-icon');
 settings.reset('show-state-counts');
 const playedBeforeDisplay = sounds.length;
 runTimers(1000);

@@ -10,7 +10,7 @@ from zipfile import ZipFile
 def validate(path):
     with ZipFile(path) as archive:
         names = archive.namelist()
-        expected = {'metadata.json', 'extension.js', 'state.js', 'alerts.js', 'io.js', 'prefs.js', 'stylesheet.css', 'schemas/org.gnome.shell.extensions.agent-status-indicator.gschema.xml', 'LICENSE'}
+        expected = {'metadata.json', 'extension.js', 'state.js', 'alerts.js', 'io.js', 'prefs.js', 'stylesheet.css', 'robot-head-symbolic.svg', 'schemas/org.gnome.shell.extensions.agent-status-indicator.gschema.xml', 'LICENSE'}
         files = {name for name in names if not name.endswith('/')}
         directories = {name for name in names if name.endswith('/')}
         if len(names) != len(set(names)) or files != expected or not directories <= {'schemas/'}:
@@ -40,7 +40,7 @@ def validate(path):
                 raise ValueError(f'Unexpected subprocess or blocking read: {pattern}')
         if 'MIT License' not in archive.read('LICENSE').decode():
             raise ValueError('Missing MIT license text')
-    print('Extension archive validated: GNOME 46 and 50, JavaScript, stylesheet and license only.')
+    print('Extension archive validated: GNOME 46 and 50, JavaScript, symbolic icon, stylesheet and license only.')
 
 
 if __name__ == '__main__':

@@ -10,7 +10,7 @@ Build from the repository root:
 bash scripts/package-extension.sh
 ```
 
-Upload `agent-status-indicator@Ruochen0513.github.io.shell-extension.zip` at <https://extensions.gnome.org/upload/> after signing in. The archive is produced with `gnome-extensions pack` when available, with a ZIP fallback for other platforms. It contains `metadata.json`, the Shell and preferences JavaScript modules, `stylesheet.css`, the GSettings schema XML under `schemas/`, and `LICENSE`. GNOME compiles the schema when installing the archive. The build validates the archive before reporting success.
+Upload `agent-status-indicator@Ruochen0513.github.io.shell-extension.zip` at <https://extensions.gnome.org/upload/> after signing in. The archive is produced with `gnome-extensions pack` when available, with a ZIP fallback for other platforms. It contains `metadata.json`, the Shell and preferences JavaScript modules, `stylesheet.css`, a bundled `robot-head-symbolic.svg`, the GSettings schema XML under `schemas/`, and `LICENSE`. GNOME compiles the schema when installing the archive. The build validates the archive before reporting success.
 
 Keep the UUID `agent-status-indicator@Ruochen0513.github.io` for all marketplace updates. The older local-install UUID is not the marketplace identity. The initial display version is `1.0.0`; the website assigns its own numeric submission version. GNOME Shell 46 and 50 are declared after offscreen native checks, including an Ubuntu 26.04 KVM test. Test additional Shell versions before adding them.
 

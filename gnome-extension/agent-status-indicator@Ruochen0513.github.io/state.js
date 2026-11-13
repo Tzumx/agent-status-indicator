@@ -49,6 +49,7 @@ export const SUMMARY_LABELS = {
     error: 'Errors', approval: 'Waiting for permission', decision: 'Waiting for your decision',
     working: 'Working', finished: 'Finished responding', idle: 'Idle',
 };
+export const PANEL_ICONS = {circle: 'Circle', robot: 'Robot head'};
 export const DISPLAY_SETTINGS = {
     show_empty_agents: ['show-empty-agents', false],
     show_state_counts: ['show-state-counts', true],
@@ -183,7 +184,10 @@ export function preferences(value = {}) {
         if (Object.hasOwn(value, key) && !isObject(value[key]))
             throw new Error(`${key} must contain an object`);
     }
-    const result = {mute_all: value.mute_all === true, notifications: {}, sounds: {}, sound_files: {}};
+    if (Object.hasOwn(value, 'panel_icon')
+        && (typeof value.panel_icon !== 'string' || !Object.hasOwn(PANEL_ICONS, value.panel_icon)))
+        throw new Error('panel_icon must be circle or robot');
+    const result = {panel_icon: value.panel_icon ?? 'circle', mute_all: value.mute_all === true, notifications: {}, sounds: {}, sound_files: {}};
     for (const [name, [, fallback]] of Object.entries(DISPLAY_SETTINGS)) {
         if (Object.hasOwn(value, name) && typeof value[name] !== 'boolean')
             throw new Error(`${name} must be a boolean`);
@@ -207,6 +211,8 @@ export function preferences(value = {}) {
 
 export function settingsPreferences(settings, legacy = {}) {
     const value = preferences(legacy);
+    if (settings.get_user_value('panel-icon') !== null)
+        value.panel_icon = settings.get_string('panel-icon');
     if (settings.get_user_value('mute-all') !== null)
         value.mute_all = settings.get_boolean('mute-all');
     for (const [name, [key]] of Object.entries(DISPLAY_SETTINGS)) {

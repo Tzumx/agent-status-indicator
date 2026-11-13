@@ -38,6 +38,8 @@ class InstallTests(unittest.TestCase):
             self.assertTrue((extension / 'io.js').exists())
             self.assertTrue((extension / 'prefs.js').exists())
             self.assertTrue((extension / 'stylesheet.css').exists())
+            self.assertEqual((extension / 'robot-head-symbolic.svg').read_bytes(),
+                             (ROOT / 'gnome-extension/agent-status-indicator@Ruochen0513.github.io/robot-head-symbolic.svg').read_bytes())
             result = subprocess.run([str(home / '.local/bin/agent-status-hook'), '--agent', 'claude', '--event', 'Stop'],
                                     input=json.dumps({'session_id': 's'}), env=env, capture_output=True, text=True, timeout=5)
             self.assertEqual(result.returncode, 0, result.stderr)
