@@ -227,6 +227,172 @@ class UsageTests(unittest.TestCase):
         state = status.load_state()
         self.assertEqual(state["sessions"]["codex"]["codex:thread"]["context"]["used_percent"], 42)
         self.assertEqual(state["alerts"]["sequence"], 1)
+        self.assertIn("codex:thread", status.usage_sources(state))
+
+    def register_source(self, sid="codex:thread", path=None, observed=None):
+        return status.apply_update("codex", "approval", session_id=sid, event="PermissionRequest",
+                                   turn_id="t", observed_at=observed or self.reported,
+                                   usage=self.collect(), usage_source=str(path or self.path))
+
+    def test_manual_refresh_collects_new_metadata_without_changing_lifecycle(self):
+        self.enable(codex_metadata=True)
+        self.write_session(self.record())
+        self.register_source()
+        before = status.load_state()
+        self.write_session(self.record(updated=self.observed - 0.1, context=7300, quota=81))
+        result = hook.refresh_usage(self.observed)
+        self.assertEqual(result, {"status": "updated", "checked": 1, "updated": 1, "unavailable": 0})
+        after = status.load_state()
+        self.assertEqual(after["updated_at"], before["updated_at"])
+        self.assertEqual(after["alerts"], before["alerts"])
+        old = before["sessions"]["codex"]["codex:thread"]
+        new = after["sessions"]["codex"]["codex:thread"]
+        self.assertEqual({k: v for k, v in new.items() if k != "context"},
+                         {k: v for k, v in old.items() if k != "context"})
+        self.assertEqual(new["context"]["used_percent"], 73)
+        self.assertEqual(after["usage"]["codex"]["windows"][0]["used_percent"], 81)
+        saved = status.state_path().read_bytes()
+        self.assertEqual(hook.refresh_usage(self.observed)["status"], "unchanged")
+        self.assertEqual(status.state_path().read_bytes(), saved)
+        self.assertNotIn(str(self.path), saved.decode())
+        self.assertNotIn("PRIVATE", saved.decode())
+        sources = status.state_path().with_name("usage-sources.json")
+        self.assertEqual(json.loads(sources.read_text())["codex:thread"]["path"], str(self.path))
+        if os.name == "posix":
+            self.assertEqual(sources.stat().st_mode & 0o777, 0o600)
+
+    def test_manual_refresh_preserves_the_registered_codex_home(self):
+        self.enable(codex_metadata=True)
+        self.write_session(self.record())
+        self.register_source()
+        self.write_session(self.record(updated=self.observed - 0.1, context=5700))
+        with patch.dict(os.environ, {"CODEX_HOME": str(self.root / "another-codex")}):
+            self.assertEqual(hook.refresh_usage(self.observed)["updated"], 1)
+        self.assertAlmostEqual(status.load_state()["sessions"]["codex"]["codex:thread"]["context"]["used_percent"], 57)
+
+    def test_manual_refresh_is_opt_in_and_requires_registered_sources(self):
+        with patch.object(hook, "codex_usage") as collect:
+            self.assertEqual(hook.refresh_usage(self.observed)["status"], "disabled")
+            collect.assert_not_called()
+        self.enable(codex_metadata=True)
+        self.write_session(self.record())
+        with patch.object(hook, "codex_usage") as collect:
+            self.assertEqual(hook.refresh_usage(self.observed)["status"], "no-sources")
+            collect.assert_not_called()
+        self.register_source()
+        self.enable(codex_metadata=False)
+        with patch.object(hook, "codex_usage") as collect:
+            self.assertEqual(hook.refresh_usage(self.observed)["status"], "disabled")
+            collect.assert_not_called()
+        self.enable(codex_metadata=True)
+        original = hook.codex_usage
+        def revoke(*args):
+            value = original(*args)
+            self.enable(codex_metadata=False)
+            return value
+        before = status.state_path().read_bytes()
+        with patch.object(hook, "codex_usage", side_effect=revoke):
+            self.assertEqual(hook.refresh_usage(self.observed)["status"], "disabled")
+        self.assertEqual(status.state_path().read_bytes(), before)
+
+    def test_manual_refresh_revalidates_sources_and_preserves_previous_reports(self):
+        self.enable(codex_metadata=True)
+        self.write_session(self.record())
+        self.register_source()
+        before = status.state_path().read_bytes()
+        self.write_session(self.record(context=9700), session="another-session")
+        result = hook.refresh_usage(self.observed)
+        self.assertEqual(result["unavailable"], 1)
+        self.assertEqual(result["updated"], 0)
+        self.assertEqual(status.state_path().read_bytes(), before)
+        self.path.unlink()
+        self.assertEqual(hook.refresh_usage(self.observed)["unavailable"], 1)
+        sources = status.state_path().with_name("usage-sources.json")
+        for raw in ("{bad", "[]", "x" * 262145):
+            sources.write_text(raw)
+            self.assertEqual(hook.refresh_usage(self.observed)["status"], "no-sources")
+        if os.name == "posix":
+            sources.unlink()
+            os.mkfifo(sources)
+            self.assertEqual(hook.refresh_usage(self.observed)["status"], "no-sources")
+
+    @unittest.skipUnless(os.name == "posix", "POSIX symbolic-link behavior")
+    def test_broken_source_loop_does_not_block_refresh_or_lifecycle(self):
+        self.enable(codex_metadata=True)
+        self.write_session(self.record())
+        self.register_source()
+        before = status.state_path().read_bytes()
+        sessions = self.path.parent
+        sessions.rename(self.root / "saved-sessions")
+        sessions.symlink_to(sessions.name, target_is_directory=True)
+        self.assertEqual(self.collect(), {})
+        result = hook.refresh_usage(self.observed)
+        self.assertEqual(result["unavailable"], 1)
+        self.assertEqual(result["updated"], 0)
+        self.assertEqual(status.state_path().read_bytes(), before)
+        result = subprocess.run([sys.executable, str(ROOT / "bin/agent-status-hook"),
+                                 "--agent", "codex", "--event", "UserPromptSubmit"],
+                                input=json.dumps({"session_id": "thread", "turn_id": "after-loop",
+                                                  "transcript_path": str(self.path)}),
+                                text=True, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        record = status.load_state()["sessions"]["codex"]["codex:thread"]
+        self.assertEqual(record["state"], "working")
+        self.assertEqual(record["turn_id"], "after-loop")
+
+    def test_manual_refresh_never_reopens_closed_sessions_or_overwrites_new_turns(self):
+        self.enable(codex_metadata=True)
+        self.write_session(self.record())
+        self.register_source()
+        original = hook.codex_usage
+        def advance(*args):
+            value = original(*args)
+            status.apply_update("codex", "working", session_id="codex:thread",
+                                event="UserPromptSubmit", turn_id="new", observed_at=self.observed + 1)
+            return value
+        with patch.object(hook, "codex_usage", side_effect=advance):
+            self.assertEqual(hook.refresh_usage(self.observed)["updated"], 0)
+        record = status.load_state()["sessions"]["codex"]["codex:thread"]
+        self.assertEqual(record["state"], "working")
+        self.assertEqual(record["turn_id"], "new")
+        status.apply_update("codex", "idle", session_id="codex:thread", event="SessionEnd",
+                            turn_id="new", observed_at=self.observed + 2)
+        with patch.object(hook, "codex_usage") as collect:
+            self.assertEqual(hook.refresh_usage(self.observed + 3)["status"], "no-sources")
+            collect.assert_not_called()
+        self.assertNotIn("context", status.load_state()["sessions"]["codex"]["codex:thread"])
+
+    def test_registered_sources_have_a_fixed_bound_and_skip_unrelated_sessions(self):
+        self.enable(codex_metadata=True)
+        self.write_session(self.record())
+        for index in range(status.MAX_USAGE_SOURCES + 3):
+            self.register_source(sid=f"codex:{index}", observed=self.reported + index / 100)
+        state = status.load_state()
+        with status.state_lock():
+            sources = status.usage_sources(state)
+        self.assertEqual(len(sources), status.MAX_USAGE_SOURCES)
+        self.assertNotIn("codex:0", sources)
+        self.assertNotIn("codex:2", sources)
+        self.assertIn(f"codex:{status.MAX_USAGE_SOURCES + 2}", sources)
+        with patch.object(hook, "codex_usage", return_value={}) as collect:
+            result = hook.refresh_usage(self.observed)
+        self.assertEqual(collect.call_count, status.MAX_USAGE_SOURCES)
+        self.assertEqual(result["checked"], status.MAX_USAGE_SOURCES)
+        self.assertEqual(len(state["sessions"]["codex"]), status.MAX_USAGE_SOURCES + 3)
+
+    def test_refresh_command_accepts_no_lifecycle_options_or_stdin(self):
+        result = subprocess.run([sys.executable, str(ROOT / "bin/agent-status-hook"),
+                                 "--agent", "codex", "--refresh-usage"],
+                                input="PRIVATE INVALID INPUT", text=True, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["status"], "disabled")
+        self.assertFalse(status.state_path().exists())
+        for options in (["--event", "Stop"], ["--status-line"], ["--state", "idle"], ["--session", "thread"]):
+            result = subprocess.run([sys.executable, str(ROOT / "bin/agent-status-hook"),
+                                     "--agent", "codex", "--refresh-usage", *options],
+                                    text=True, capture_output=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(status.state_path().exists())
 
     def test_claude_status_line_is_opt_in_and_preserves_existing_command(self):
         status.apply_update("claude", "working", session_id="claude:s", event="UserPromptSubmit",

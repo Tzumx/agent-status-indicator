@@ -112,6 +112,7 @@ Default priority for overall display: `error` > `permission/decision required` >
 - Preserve unresolved notices from other sessions and applications. Age alone must never expire a session notice.
 - Consume historical transitions that are already superseded without raising a stale notice or sound. Cancel queued sounds if their transition is resolved before playback; delayed old events must not remove a newer notice.
 - Notifications must be configurable by event category, with a way to mute all alerts.
+- Missing/invalid internal notification history must use plain diagnostic wording under Troubleshooting while preserving session display and suppressing uncertain alerts. Complete normal-display fixtures must include valid history metadata.
 - If the desktop's notification service is unavailable, state tracking and the panel must keep working.
 
 ### 4.4 Sounds
@@ -139,6 +140,8 @@ Default priority for overall display: `error` > `permission/decision required` >
 - Show the most recent shared account quota once per agent group and context-window usage per session, using labeled percentages and native level bars. Do not sum account percentages across sessions. Multiple simultaneous accounts for one agent are not distinguished in this version.
 - Show only validated reported data; unavailable values are hidden rather than presented as zero. Retain report timestamps and hide expired quota windows without inventing a new zero-usage snapshot.
 - Codex collection is disabled by default and enabled explicitly in Settings. At supported lifecycle hooks, read only the supplied session file under the configured Codex sessions directory, verify its session identity, and extract numeric token-count/rate-limit metadata. Bound each read to a 64 KiB header plus a 256 KiB tail and each parsed record to 64 KiB; ignore incomplete records.
+- An explicit **Refresh local data** control rereads saved state/settings and, with Codex collection enabled, rescans up to 32 previously registered session files. A single short-lived fixed helper handles this user action with a five-second UI deadline and bounded output; it is cancelled on extension disable. It must not change lifecycle timestamps, replay guards or alert history, discover session files, make account requests or force a Claude status-line update. Report ages and unchanged/unavailable results must be visible.
+- A private cache may retain those known Codex file locations, their original configured sessions directories and registration times separately from status data. Each rescan revalidates the file identity, consent and existing read bounds; closed/reset/interrupted records are excluded.
 - Session files also contain conversation text. Never retain, display, log or infer meaning from that text. Do not scan for other session files, traverse complete histories, request account credentials, add network calls, or require a daemon.
 - Codex context is an estimate from the latest model request's token count and reported context window, never cumulative lifetime tokens. The file format is unstable; unsupported/missing metadata means unavailable usage.
 - Claude Code uses its documented optional status-line JSON input, including reported context percentage and available account quota windows. Preserve existing status-line commands when the user chooses a wrapper; never silently replace configuration.
@@ -167,7 +170,7 @@ Codex sessions -------- hooks ---+                                |
                                                           +--> notifications / sounds
 ```
 
-No persistent polling process is required in the GNOME deployment. Hook commands are short-lived and run only when agent lifecycle events occur. Implementation may route notifications through a short-lived utility or a GNOME-native API, but the chosen mechanism must not depend on a resident Python/GTK/Tauri application.
+No persistent polling process is required in the GNOME deployment. Hook commands are short-lived and run on lifecycle callbacks or an explicit manual usage refresh. Implementation may route notifications through a short-lived utility or a GNOME-native API, but the chosen mechanism must not depend on a resident Python/GTK/Tauri application.
 
 ### 5.2 File monitoring
 

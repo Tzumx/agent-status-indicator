@@ -138,7 +138,7 @@ export default class AgentStatusPreferences extends ExtensionPreferences {
         integration.add(collectors);
         for (const [name, title, subtitle] of [
             ['codex_metadata', 'Read Codex usage metadata',
-                'Read bounded portions of the session file supplied by each hook. Files also contain conversation text; only numeric usage metadata is retained. The file format may change.'],
+                'Read bounded portions of session files supplied by hooks, including manual refresh of known files. Files also contain conversation text; only usage metadata and known file locations are retained. The file format may change.'],
             ['claude_statusline', 'Receive Claude Code usage',
                 'Receive metadata from the optional status-line adapter. Requires one-time status-line setup; existing commands can be preserved.'],
         ]) {

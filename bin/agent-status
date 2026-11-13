@@ -9,6 +9,7 @@ import json
 import errno
 import os
 import socket
+import stat
 import subprocess
 import shutil
 import queue
@@ -29,6 +30,7 @@ SOCKET_SUPPORTED = hasattr(socket, "AF_UNIX")
 CLIENT_TIMEOUT_SECONDS = 0.5
 MAX_REQUEST_BYTES = 65536
 LOCK_TIMEOUT_SECONDS = 2
+MAX_USAGE_SOURCES = 32
 
 
 def xdg_cache_home() -> Path:
@@ -117,13 +119,64 @@ def state_lock():
         os.close(fd)
 
 
-def _save_state_unlocked(state: dict[str, Any]) -> None:
-    path = state_path()
+def _save_json_unlocked(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     with os.fdopen(os.open(tmp, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600), "w", encoding="utf-8") as stream:
-        json.dump(normalize_state(state), stream, indent=2, sort_keys=True, allow_nan=False)
+        json.dump(value, stream, indent=2, sort_keys=True, allow_nan=False)
     tmp.replace(path)
+
+
+def _save_state_unlocked(state: dict[str, Any]) -> None:
+    _save_json_unlocked(state_path(), normalize_state(state))
+
+
+def usage_sources(state: dict) -> dict:
+    """Read only previously registered sources; never discover session files."""
+    path = state_path().with_name("usage-sources.json")
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_size > 524288
+                    or (hasattr(os, "getuid") and info.st_uid != os.getuid())):
+                return {}
+            value = json.loads(stream.read(524289))
+        if not isinstance(value, dict) or len(value) > MAX_USAGE_SOURCES:
+            return {}
+        result = {}
+        for sid, source in value.items():
+            record = state["sessions"]["codex"].get(sid)
+            if (not record or record.get("event") in {"SessionEnd", "Reset", "Interrupt"}
+                    or not isinstance(source, dict)):
+                continue
+            path = source.get("path")
+            observed = timestamp(source.get("observed_at"), 0)
+            root = source.get("root", str(Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "sessions"))
+            if (isinstance(path, str) and 0 < len(path) <= 4096 and observed > 0
+                    and isinstance(root, str) and 0 < len(root) <= 4096 and Path(root).is_absolute()):
+                result[sid] = {"path": path, "root": root, "observed_at": observed}
+        return result
+    except (OSError, ValueError, RecursionError):
+        return {}
+
+
+def _remember_usage_source(state: dict, sid: str, path: str, observed: float) -> None:
+    if not isinstance(path, str) or not 0 < len(path) <= 4096:
+        return
+    sources = usage_sources(state)
+    record = state["sessions"]["codex"].get(sid)
+    if (record and record.get("event") not in {"SessionEnd", "Reset", "Interrupt"}
+            and observed >= record["updated_at"]
+            and observed >= sources.get(sid, {}).get("observed_at", 0)):
+        root = str((Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "sessions").resolve())
+        if len(root) > 4096:
+            return
+        if sources.get(sid, {}).get("path") == path and sources[sid].get("root") == root:
+            return
+        sources[sid] = {"path": path, "root": root, "observed_at": observed}
+    sources = dict(sorted(sources.items(), key=lambda item: item[1]["observed_at"])[-MAX_USAGE_SOURCES:])
+    _save_json_unlocked(state_path().with_name("usage-sources.json"), sources)
 
 
 def save_state(state: dict[str, Any]) -> None:
@@ -148,6 +201,7 @@ def apply_update(
     attention: str = "",
     legacy_session_id: str = "",
     usage: dict | None = None,
+    usage_source: str = "",
 ) -> dict[str, Any]:
     if agent not in VALID_AGENTS:
         raise ValueError(f"invalid agent: {agent}")
@@ -220,6 +274,11 @@ def apply_update(
         state["updated_at"] = ts
         state = normalize_state(state)
         _save_state_unlocked(state)
+        if agent == "codex" and session_id and usage and usage_source:
+            try:
+                _remember_usage_source(state, session_id, usage_source, timestamp(observed_at, ts))
+            except (OSError, ValueError, RuntimeError):
+                pass  # Optional source caching must not prevent lifecycle updates.
         return state
 
 
@@ -227,13 +286,27 @@ def apply_usage(agent: str, session_id: str, usage: dict, observed_at: float) ->
     """A metadata update must not change lifecycle state, timestamps or alerts."""
     if agent not in {"codex", "claude"}:
         raise ValueError("invalid agent")
+    apply_usage_batch({(agent, session_id): usage}, observed_at)
+
+
+def apply_usage_batch(snapshots: dict, observed_at: float) -> int:
+    """Merge a bounded collection once, preserving concurrent lifecycle changes."""
+    changed = 0
     with state_lock():
         state = load_state()
-        record = state["sessions"][agent].get(session_id)
-        if record is None or observed_at < record["updated_at"]:
-            return
-        merge_usage(state, agent, session_id, usage)
-        _save_state_unlocked(state)
+        for (agent, session_id), value in snapshots.items():
+            if agent not in {"codex", "claude"}:
+                continue
+            record = state["sessions"][agent].get(session_id)
+            if record is None or observed_at < record["updated_at"]:
+                continue
+            previous = (record.get("context"), state.get("usage", {}).get(agent))
+            merge_usage(state, agent, session_id, value)
+            if previous != (record.get("context"), state.get("usage", {}).get(agent)):
+                changed += 1
+        if changed:
+            _save_state_unlocked(state)
+    return changed
 
 
 def command_update(args: argparse.Namespace) -> int:

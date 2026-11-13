@@ -251,7 +251,7 @@ export class AlertCursor {
             this.generation = null;
             this.sequence = 0;
             this.fromMissing = missing;
-            return {events: [], warning: missing ? '' : 'Alert history unavailable; update all companion writers.'};
+            return {events: [], warning: missing ? '' : 'Notification tracking unavailable.'};
         }
         const events = log.events.slice(-256).filter(item =>
             item && Number.isSafeInteger(item.sequence) && item.sequence > 0
@@ -298,4 +298,31 @@ export function quotaWindows(state, agent, now = Date.now() / 1000) {
 export function quotaLabel(minutes) {
     return minutes % 1440 === 0 ? `${minutes / 1440}d`
         : minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
+}
+
+export function reportedTime(updated, now = Date.now() / 1000) {
+    if (!Number.isFinite(updated) || updated <= 0)
+        return 'Not reported yet';
+    const age = Math.max(0, Math.floor(now - updated));
+    if (age < 60)
+        return 'Last reported just now';
+    if (age < 3600)
+        return `Last reported ${Math.floor(age / 60)} min ago`;
+    if (age < 86400)
+        return `Last reported ${Math.floor(age / 3600)} h ago`;
+    const days = Math.floor(age / 86400);
+    return `Last reported ${days} ${days === 1 ? 'day' : 'days'} ago`;
+}
+
+export function refreshFeedback(result) {
+    if (result.status === 'disabled')
+        return 'Codex collection is off. Claude updates when its next report arrives.';
+    if (result.status === 'no-sources')
+        return 'No known Codex usage yet; waiting for its next update.';
+    if (result.updated)
+        return `Updated ${result.updated} Codex ${result.updated === 1 ? 'session' : 'sessions'}.`
+            + (result.unavailable ? ' Some reports were unavailable.' : '');
+    if (result.unavailable)
+        return 'Some usage reports are unavailable; keeping the last reports.';
+    return 'No newer Codex reports. Claude updates when its next report arrives.';
 }

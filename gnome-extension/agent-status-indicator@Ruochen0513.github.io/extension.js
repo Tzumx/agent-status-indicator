@@ -10,10 +10,11 @@ import * as BarLevel from 'resource:///org/gnome/shell/ui/barLevel.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {ensureActorVisibleInScrollView} from 'resource:///org/gnome/shell/misc/animationUtils.js';
-import {summarize, COLORS, sessionRows, STATUS_LABELS, AGENT_LABELS, preferences, AlertCursor, sessionSummary, sessionDetail, SUMMARY_LABELS, STATUS_ICONS, settingsPreferences, quotaWindows, quotaLabel, currentAlerts} from './state.js';
+import {Spinner} from 'resource:///org/gnome/shell/ui/animation.js';
+import {summarize, COLORS, sessionRows, STATUS_LABELS, AGENT_LABELS, preferences, AlertCursor, sessionSummary, sessionDetail, SUMMARY_LABELS, STATUS_ICONS, settingsPreferences, quotaWindows, quotaLabel, currentAlerts, reportedTime, refreshFeedback} from './state.js';
 import {Alerts, QuotaResetTimer} from './alerts.js';
 import * as LoginManager from 'resource:///org/gnome/shell/misc/loginManager.js';
-import {readJson} from './io.js';
+import {readJson, refreshUsage} from './io.js';
 
 
 function isMissing(error) {
@@ -31,6 +32,9 @@ export default class AgentStatusExtension extends Extension {
         this._stateError = '';
         this._configError = '';
         this._alertWarning = '';
+        this._usageRefreshing = false;
+        this._refreshMessage = '';
+        this._refreshError = '';
         this._missing = true;
         this._reading = false;
         this._stateDirty = true;
@@ -109,6 +113,24 @@ export default class AgentStatusExtension extends Extension {
             this._button.menu.addMenuItem(item);
         }
         this._button.menu.addMenuItem(this._detail);
+        const refreshRow = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        const refreshLabels = new St.BoxLayout({vertical: true, x_expand: true});
+        this._lastReported = new St.Label({style_class: 'dim-label agent-status-usage-time'});
+        this._refreshHint = new St.Label({style_class: 'dim-label agent-status-usage-time'});
+        this._refreshHint.clutter_text.line_wrap = true;
+        this._refreshHint.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        refreshLabels.add_child(this._lastReported);
+        refreshLabels.add_child(this._refreshHint);
+        refreshRow.add_child(refreshLabels);
+        this._refreshButton = new St.Button({
+            style_class: 'button', can_focus: true, accessible_name: 'Refresh local data',
+            child: new St.Icon({icon_name: 'view-refresh-symbolic', style_class: 'popup-menu-icon'}),
+        });
+        this._refreshButton.connect('clicked', () => this._refreshLocal());
+        this._refreshSpinner = new Spinner(16, {animate: true, hideOnStop: true});
+        refreshRow.add_child(this._refreshSpinner);
+        refreshRow.add_child(this._refreshButton);
+        this._button.menu.addMenuItem(refreshRow);
         this._button.menu.addMenuItem(this._sessions);
         this._mute = this._button.menu.addAction('Mute all alerts', () => this._toggleMute());
         this._troubleshooting = new PopupMenu.PopupSubMenuMenuItem('Troubleshooting');
@@ -119,12 +141,15 @@ export default class AgentStatusExtension extends Extension {
             this._render();
         });
         this._troubleshooting.menu.addMenuItem(this._resetControls);
-        this._troubleshooting.menu.addAction('Refresh status', () => {
-            this._stateDirty = true;
-            this._configDirty = true;
-            this._watchDirty = true;
-            this._queueRefresh();
-        });
+        this._notificationDetail = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._notificationDetail.label.clutter_text.line_wrap = true;
+        this._notificationDetail.label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        this._troubleshooting.menu.addMenuItem(this._notificationDetail);
+        this._refreshDetail = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._refreshDetail.label.clutter_text.line_wrap = true;
+        this._refreshDetail.label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        this._troubleshooting.menu.addMenuItem(this._refreshDetail);
+        this._troubleshooting.menu.addAction('Refresh status', () => this._refreshLocal());
         this._button.menu.addAction('Settings…', () => this.openPreferences());
         Main.panel.addToStatusArea(this.uuid, this._button, 0, 'right');
         this._setupMonitors();
@@ -144,6 +169,7 @@ export default class AgentStatusExtension extends Extension {
         this._settingsChangedId = 0;
         this._settings = null;
         this._legacyPreferences = null;
+        this._refreshSpinner?.stop();
         this._cancellable?.cancel();
         this._cancellable = null;
         this._clearMonitors();
@@ -306,6 +332,8 @@ export default class AgentStatusExtension extends Extension {
                         throw new Error('Invalid session records');
                     if (cancellable !== this._cancellable || cancellable.is_cancelled())
                         return;
+                    if (!this._usageRefreshing)
+                        this._refreshMessage = '';
                     this._lastState = candidate;
                     this._missing = false;
                     this._stateError = '';
@@ -336,6 +364,40 @@ export default class AgentStatusExtension extends Extension {
                 this._reading = false;
                 if (this._stateDirty || this._configDirty || this._watchDirty)
                     this._queueRefresh();
+            }
+        }
+    }
+
+    async _refreshLocal() {
+        if (this._usageRefreshing || !this._cancellable)
+            return;
+        const cancellable = this._cancellable;
+        this._usageRefreshing = true;
+        this._refreshMessage = 'Checking local data…';
+        this._refreshError = '';
+        this._refreshSpinner.play();
+        this._render();
+        let message;
+        try {
+            message = refreshFeedback(await refreshUsage(cancellable));
+        } catch (error) {
+            if (cancellable !== this._cancellable || cancellable.is_cancelled())
+                return;
+            message = 'Usage refresh unavailable; saved status reloaded.';
+            this._refreshError = 'Check that the updated companion is installed. '
+                + 'Claude usage updates through its status line. ' + String(error.message).slice(0, 160);
+        } finally {
+            if (cancellable === this._cancellable && !cancellable.is_cancelled()) {
+                this._stateDirty = true;
+                this._configDirty = true;
+                this._watchDirty = true;
+                await this._refresh();
+                if (cancellable === this._cancellable && !cancellable.is_cancelled()) {
+                    this._usageRefreshing = false;
+                    this._refreshMessage = message;
+                    this._refreshSpinner.stop();
+                    this._render();
+                }
             }
         }
     }
@@ -386,7 +448,7 @@ export default class AgentStatusExtension extends Extension {
         const {counts, headline} = sessionSummary(rows);
         const description = [this._stateError,
             this._missing ? 'Waiting for agent status. Open Settings → Integration for setup help.' : '',
-            this._configError, this._alertWarning].filter(Boolean).join('\n');
+            this._configError].filter(Boolean).join('\n');
         if (this._panelIcon !== this._preferences.panel_icon) {
             this._panelIcon = this._preferences.panel_icon;
             this._dot.gicon = this._panelIcons[this._panelIcon];
@@ -399,6 +461,20 @@ export default class AgentStatusExtension extends Extension {
             : this._missing ? 'Waiting for agent status' : headline);
         this._detail.label.set_text(description);
         this._detail.visible = Boolean(description);
+        this._lastReported.set_text(Number.isFinite(this._lastState.updated_at)
+            ? reportedTime(this._lastState.updated_at).replace('Last reported', 'Status updated') : 'No status updates received');
+        this._refreshHint.set_text(this._refreshMessage || 'Usage reflects the last agent report.');
+        this._refreshButton.reactive = !this._usageRefreshing;
+        this._refreshButton.can_focus = !this._usageRefreshing;
+        this._refreshButton.set_accessible_name(this._usageRefreshing ? 'Refreshing local data' : 'Refresh local data');
+        this._troubleshooting.label.set_text(this._alertWarning || this._refreshError
+            ? 'Troubleshooting · Needs attention' : 'Troubleshooting');
+        this._notificationDetail.visible = Boolean(this._alertWarning);
+        this._notificationDetail.label.set_text(this._alertWarning
+            + (this._alertWarning === 'Notification tracking unavailable.'
+                ? ' Session status remains available, but new session notifications cannot be delivered. Update the companion commands and hooks if this persists.' : ''));
+        this._refreshDetail.visible = Boolean(this._refreshError);
+        this._refreshDetail.label.set_text(this._refreshError);
         for (const [state, metric] of this._metrics) {
             metric.count.set_text(String(counts[state]));
             metric.item.visible = this._preferences.show_state_counts && counts[state] > 0;
@@ -418,7 +494,9 @@ export default class AgentStatusExtension extends Extension {
         const bar = new BarLevel.BarLevel({style_class: 'barlevel agent-status-usage-bar', x_expand: true});
         box.add_child(title);
         box.add_child(bar);
-        return {box, label, amount, bar};
+        const reported = new St.Label({style_class: 'dim-label agent-status-usage-time'});
+        box.add_child(reported);
+        return {box, label, amount, bar, reported};
     }
 
     _updateUsage(widget, value, title) {
@@ -428,6 +506,9 @@ export default class AgentStatusExtension extends Extension {
         const percent = Math.round(value.used_percent);
         widget.label.set_text(title);
         widget.amount.set_text(`${percent}% used`);
+        widget.reported.visible = Number.isFinite(value.updated_at) && value.updated_at > 0;
+        if (widget.reported.visible)
+            widget.reported.set_text(reportedTime(value.updated_at));
         widget.bar.value = value.used_percent / 100;
         widget.bar.set_accessible_name(`${title}: ${percent}% used`);
         const color = percent >= 95 ? COLORS.error : percent >= 80 ? COLORS.approval : COLORS.finished;
@@ -487,7 +568,7 @@ export default class AgentStatusExtension extends Extension {
             }
             group.reported.visible = windows.length > 0;
             if (windows.length)
-                group.reported.set_text('Reported ' + sessionDetail({updatedAt: this._lastState.usage[agent].updated_at}));
+                group.reported.set_text(reportedTime(this._lastState.usage[agent].updated_at));
             const sessions = groups[agent];
             if (rebuilding && sessions.length === 0)
                 group.addMenuItem(new PopupMenu.PopupMenuItem('No sessions', {reactive: false}));

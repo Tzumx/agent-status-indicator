@@ -35,6 +35,14 @@ def validate(path):
         if not re.fullmatch(r'(?=.*[a-zA-Z0-9])[a-zA-Z0-9 .]{1,16}', metadata.get('version-name', '')):
             raise ValueError('Invalid version-name')
         extension = '\n'.join(archive.read(name).decode() for name in names if name.endswith('.js'))
+        helper = """Gio.Subprocess.new([
+        GLib.build_filenamev([GLib.get_home_dir(), '.local', 'bin', 'agent-status-hook']),
+        '--agent', 'codex', '--refresh-usage',
+    ], Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE)"""
+        io = archive.read('io.js').decode()
+        if io.count(helper) != 1:
+            raise ValueError('Unexpected manual usage helper command')
+        extension = extension.replace(helper, '', 1)
         for pattern in ('Gio.Subprocess', 'spawn_command_line', 'load_contents(null)', 'GLib.file_get_contents'):
             if pattern in extension:
                 raise ValueError(f'Unexpected subprocess or blocking read: {pattern}')

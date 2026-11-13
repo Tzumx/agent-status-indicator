@@ -294,7 +294,7 @@ agent-status update codex idle   # reset all Codex sessions
 agent-status update all idle     # reset both agents
 ```
 
-Reset sessions with the CLI; the GNOME session menu can copy the exact command for review in a terminal. It does not launch companion scripts. Errors remain visible until that session resumes, ends, or is reset. A corrupt/unreadable state file is reported as an error, with the last valid state retained for diagnostics. `agent-status update all idle` backs up a corrupt file before resetting it.
+Reset sessions with the CLI; the GNOME session menu can copy the exact command for review in a terminal. Reset commands are never executed by the extension. The user-invoked **Refresh local data** action may run the installed usage-only helper; see [GNOME usage](docs/gnome-usage.md#account-quota-and-session-context). Errors remain visible until that session resumes, ends, or is reset. A corrupt/unreadable state file is reported as an error, with the last valid state retained for diagnostics. `agent-status update all idle` backs up a corrupt file before resetting it.
 
 ### GNOME does not show the extension
 
@@ -310,7 +310,7 @@ gnome-extensions info agent-status-indicator@Ruochen0513.github.io
 - No network connection is required.
 - Hooks retain lifecycle labels, IDs, and project basenames; arbitrary payload messages and tool input are not persisted. Transcript-path fallback identities are hashed without reading the transcript.
 - Linux Unix sockets use `0600` permissions.
-- Usage collection is opt-in. Codex may read bounded portions of its supplied session file, retaining only numeric usage metadata; Claude uses optional status-line JSON. See [GNOME usage](docs/gnome-usage.md#account-quota-and-session-context) for access bounds and configuration.
+- Usage collection is opt-in. Codex may read bounded portions of its supplied session file, retaining numeric usage metadata and a private bounded cache of known source locations for manual refresh; Claude uses optional status-line JSON. See [GNOME usage](docs/gnome-usage.md#account-quota-and-session-context) for access bounds and configuration.
 
 ## Development
 

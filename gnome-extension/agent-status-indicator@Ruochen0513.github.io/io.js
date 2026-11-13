@@ -16,6 +16,10 @@ export function asyncCall(object, start, finish, args) {
 
 export async function readJson(file, cancellable, limit = 1048576) {
     const stream = await asyncCall(file, 'read_async', 'read_finish', [GLib.PRIORITY_DEFAULT, cancellable]);
+    return readStreamJson(stream, cancellable, limit);
+}
+
+async function readStreamJson(stream, cancellable, limit) {
     try {
         const chunks = [];
         let length = 0;
@@ -62,4 +66,41 @@ export async function writeJson(file, value, cancellable) {
         new TextEncoder().encode(JSON.stringify(value) + '\n'), null, false,
         Gio.FileCreateFlags.PRIVATE | Gio.FileCreateFlags.REPLACE_DESTINATION, cancellable,
     ]);
+}
+
+export async function refreshUsage(cancellable) {
+    if (cancellable.is_cancelled())
+        throw new Error('Refresh cancelled');
+    // Only an explicit click launches this fixed, separately installed helper.
+    const child = Gio.Subprocess.new([
+        GLib.build_filenamev([GLib.get_home_dir(), '.local', 'bin', 'agent-status-hook']),
+        '--agent', 'codex', '--refresh-usage',
+    ], Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE);
+    const cancelled = cancellable.connect(() => child.force_exit());
+    let timedOut = false;
+    let deadline = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 5000, () => {
+        deadline = 0;
+        timedOut = true;
+        child.force_exit();
+        return GLib.SOURCE_REMOVE;
+    });
+    try {
+        const value = await readStreamJson(child.get_stdout_pipe(), cancellable, 4096);
+        await asyncCall(child, 'wait_check_async', 'wait_check_finish', [cancellable]);
+        if (!['disabled', 'no-sources', 'updated', 'unchanged'].includes(value?.status)
+            || !['checked', 'updated', 'unavailable'].every(key => Number.isSafeInteger(value[key])
+                && value[key] >= 0 && value[key] <= 32)
+            || value.updated > value.checked || value.unavailable > value.checked)
+            throw new Error('Invalid usage refresh result');
+        return value;
+    } catch (error) {
+        child.force_exit();
+        if (timedOut)
+            throw new Error('Local usage refresh timed out');
+        throw error;
+    } finally {
+        if (deadline)
+            GLib.source_remove(deadline);
+        cancellable.disconnect(cancelled);
+    }
 }

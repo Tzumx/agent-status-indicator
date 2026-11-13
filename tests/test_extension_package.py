@@ -14,7 +14,7 @@ spec.loader.exec_module(validator)
 
 
 class PackageTests(unittest.TestCase):
-    def make_archive(self, directory, extra=None, metadata_update=None, source=None):
+    def make_archive(self, directory, extra=None, metadata_update=None, source=None, io_source=None):
         path = Path(directory) / 'extension.zip'
         metadata = json.loads((EXTENSION / 'metadata.json').read_text())
         metadata.update(metadata_update or {})
@@ -23,7 +23,7 @@ class PackageTests(unittest.TestCase):
             archive.writestr('extension.js', source if source is not None else (EXTENSION / 'extension.js').read_text())
             archive.write(EXTENSION / 'state.js', 'state.js')
             archive.write(EXTENSION / 'alerts.js', 'alerts.js')
-            archive.write(EXTENSION / 'io.js', 'io.js')
+            archive.writestr('io.js', io_source if io_source is not None else (EXTENSION / 'io.js').read_text())
             archive.write(EXTENSION / 'prefs.js', 'prefs.js')
             archive.write(EXTENSION / 'stylesheet.css', 'stylesheet.css')
             archive.write(EXTENSION / 'robot-head-symbolic.svg', 'robot-head-symbolic.svg')
@@ -54,3 +54,12 @@ class PackageTests(unittest.TestCase):
             for source in ('Gio.Subprocess.new([]);', 'file.load_contents(null);'):
                 with self.subTest(source=source), self.assertRaises(ValueError):
                     validator.validate(self.make_archive(directory, source=source))
+
+    def test_manual_helper_allows_only_the_fixed_usage_command(self):
+        original = (EXTENSION / 'io.js').read_text()
+        with tempfile.TemporaryDirectory() as directory:
+            for source in (original.replace("'--refresh-usage'", "'--event'"),
+                           original.replace("'agent-status-hook'", "'another-command'"),
+                           original + "\nGio.Subprocess.new(['sh']);"):
+                with self.subTest(source=source[-80:]), self.assertRaises(ValueError):
+                    validator.validate(self.make_archive(directory, io_source=source))

@@ -23,6 +23,29 @@ let monitorFailure = false;
 const failedMonitorPaths = new Set();
 let notificationFailure = false;
 let audioFailure = false;
+const refreshChildren = [];
+let refreshOutput = JSON.stringify({status: 'unchanged', checked: 1, updated: 0, unavailable: 0});
+let refreshMissing = false;
+let refreshWait = false;
+class RefreshChild {
+    constructor(argv) {
+        assert.deepEqual(Array.from(argv), ['/home/test/.local/bin/agent-status-hook', '--agent', 'codex', '--refresh-usage']);
+        if (refreshMissing) throw Error('helper not installed');
+        refreshChildren.push(this);
+        this.output = refreshOutput;
+    }
+    get_stdout_pipe() { return file('/helper-output').read_finish({payload: this.output}); }
+    wait_check_async(cancellable, callback) {
+        this.done = () => queueMicrotask(() => callback(this, {cancellable}));
+        if (!refreshWait) this.done();
+    }
+    wait_check_finish(result) {
+        checkCancelled(result.cancellable);
+        if (this.killed) throw Error('helper terminated');
+        return true;
+    }
+    force_exit() { this.killed = true; this.done?.(); }
+}
 const settingsValues = new Map();
 const settingsSignals = new Map();
 let settingsSignalId = 0;
@@ -53,7 +76,10 @@ class GLibError extends Error {
 }
 class Cancellable {
     cancelled = false;
-    cancel() { this.cancelled = true; }
+    signals = new Map();
+    connect(callback) { const id = this.signals.size + 1; this.signals.set(id, callback); return id; }
+    disconnect(id) { this.signals.delete(id); }
+    cancel() { this.cancelled = true; for (const callback of this.signals.values()) callback(); }
     is_cancelled() { return this.cancelled; }
 }
 function checkCancelled(cancellable) {
@@ -367,7 +393,7 @@ assert.equal(fresh.read(log(1, [event(1)])).events.length, 1, 'first live event 
 const imports = {
     'gi://GLib': {default: {
         PRIORITY_DEFAULT: 0, SOURCE_REMOVE: false, Error: GLibError,
-        get_user_cache_dir: () => '/cache', get_user_config_dir: () => '/config',
+        get_user_cache_dir: () => '/cache', get_user_config_dir: () => '/config', get_home_dir: () => '/home/test',
         build_filenamev: parts => parts.join('/'),
         timeout_add: (_priority, delay, callback) => { timers.set(++timerId, {delay, callback}); return timerId; },
         source_remove: id => { timers.delete(id); },
@@ -375,6 +401,7 @@ const imports = {
         Bytes: class { constructor(data) { this.data = data; } },
     }},
     'gi://Gio': {default: {
+        Subprocess: {new: argv => new RefreshChild(argv)}, SubprocessFlags: {STDOUT_PIPE: 1, STDERR_SILENCE: 2},
         Cancellable, IOErrorEnum: {NOT_FOUND: 1, EXISTS: 3, WRONG_ETAG: 4}, FileMonitorFlags: {WATCH_MOVES: 1},
         ThemedIcon: class {constructor(props) { Object.assign(this, props); }},
         FileIcon: class {constructor(props) { Object.assign(this, props); }},
@@ -404,6 +431,9 @@ const imports = {
     },
     'resource:///org/gnome/shell/misc/animationUtils.js': {
         ensureActorVisibleInScrollView: (view, actor) => scrollRequests.push([view, actor]),
+    },
+    'resource:///org/gnome/shell/ui/animation.js': {
+        Spinner: class extends Actor {play() { this.playing = true; } stop() { this.playing = false; }},
     },
     'resource:///org/gnome/shell/ui/messageTray.js': {
         Source, Notification, NotificationDestroyedReason: {EXPIRED: 1, DISMISSED: 2, REPLACED: 4},
@@ -474,6 +504,20 @@ for (const invalid of ['unknown', ['robot'], {}, null, false, 1])
 assert.match(instance._dot.style, /#2ea043/);
 assert.equal(sources.length, 0, 'no notification at startup');
 assert.equal(timers.size, 0, 'no periodic refresh source');
+assert.equal(refreshChildren.length, 0, 'enabling the extension never starts a helper');
+const refreshPromise = instance._refreshLocal();
+assert.equal(instance._refreshSpinner.playing, true);
+assert.equal(instance._refreshButton.reactive, false);
+await instance._refreshLocal();
+assert.equal(refreshChildren.length, 1, 'duplicate clicks cannot start another helper');
+await settle();
+await refreshPromise;
+assert.equal(instance._refreshSpinner.playing, false);
+assert.equal(instance._refreshButton.reactive, true);
+assert.match(instance._refreshHint.text, /No newer Codex reports/);
+assert.equal(timers.size, 0, 'refresh leaves no polling or deadline timer behind');
+assert.equal(sources.length, 0, 'manual refresh does not replay startup alerts');
+
 assert(monitors.some(monitor => !monitor.cancelled && monitor.path === '/config'));
 assert.deepEqual(instance._button.menu.actions.map(action => action.text), ['Mute all alerts', 'Settings…']);
 instance._button.menu.actions.find(action => action.text === 'Settings…').callback();
@@ -1051,5 +1095,65 @@ assert.equal(quotaFailures.length, 1, 'notification backend failure is contained
 failingQuotaAlerts.destroy();
 notificationFailure = false;
 assert.equal(timers.size, 0);
+
+const {reportedTime, refreshFeedback} = model.namespace;
+assert.equal(reportedTime(0, 10000), 'Not reported yet');
+assert.equal(reportedTime(9999, 10000), 'Last reported just now');
+assert.equal(reportedTime(9880, 10000), 'Last reported 2 min ago');
+assert.equal(reportedTime(2800, 10000), 'Last reported 2 h ago');
+assert.equal(reportedTime(1, 86401), 'Last reported 1 day ago');
+assert.equal(reportedTime(1, 172801), 'Last reported 2 days ago');
+assert.equal(reportedTime(10001, 10000), 'Last reported just now');
+assert.match(refreshFeedback({status: 'no-sources'}), /No known Codex usage yet/);
+const historyMissing = new AlertCursor();
+assert.equal(historyMissing.read({sessions: {}}).warning, 'Notification tracking unavailable.');
+
+for (const invalid of ['[]', '{bad', 'x'.repeat(4097),
+    JSON.stringify({status: 'updated', checked: 1, updated: 2, unavailable: 0})]) {
+    refreshOutput = invalid;
+    await assert.rejects(ioModule.namespace.refreshUsage(new Cancellable()));
+    assert(refreshChildren.at(-1).killed, 'invalid helper results terminate the child');
+    assert.equal(timers.size, 0);
+}
+refreshOutput = JSON.stringify({status: 'unchanged', checked: 1, updated: 0, unavailable: 0});
+refreshWait = true;
+const timedRefresh = assert.rejects(ioModule.namespace.refreshUsage(new Cancellable()), /timed out/);
+await drain();
+runTimers(5000);
+await timedRefresh;
+assert(refreshChildren.at(-1).killed);
+assert.equal(timers.size, 0);
+const cancelledRefresh = new Cancellable();
+const cancelledPromise = assert.rejects(ioModule.namespace.refreshUsage(cancelledRefresh), /cancelled/);
+await drain();
+cancelledRefresh.cancel();
+await cancelledPromise;
+assert(refreshChildren.at(-1).killed);
+assert.equal(cancelledRefresh.signals.size, 0);
+assert.equal(timers.size, 0);
+refreshWait = false;
+instance.enable();
+await settle();
+await updateState({sessions: {codex: {s: {state: 'working'}}}});
+assert.equal(instance._detail.visible, false, 'notification diagnostics do not occupy the main status block');
+assert.equal(instance._notificationDetail.visible, true);
+assert.match(instance._notificationDetail.label.text, /Notification tracking unavailable/);
+assert.match(instance._troubleshooting.label.text, /Needs attention/);
+refreshMissing = true;
+const missingRefresh = instance._refreshLocal();
+await settle();
+await missingRefresh;
+assert.match(instance._refreshHint.text, /Usage refresh unavailable/);
+assert.equal(instance._refreshDetail.visible, true);
+assert.equal(instance._lastState.sessions.codex.s.state, 'working', 'missing helper preserves status');
+refreshMissing = false;
+refreshWait = true;
+const closingRefresh = instance._refreshLocal();
+await drain();
+instance.disable();
+await closingRefresh;
+assert(refreshChildren.at(-1).killed, 'disable terminates only its owned helper');
+assert.equal(timers.size, 0);
+refreshWait = false;
 
 console.log('GNOME monitoring, bounded reads, sessions, alert history, sounds, preferences and reload lifecycle passed');

@@ -132,14 +132,14 @@ def object_value(value: object) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def codex_usage(payload: dict, session_id: str, observed: float) -> dict:
+def codex_usage(payload: dict, session_id: str, observed: float, sessions_root: str | None = None) -> dict:
     if not usage_enabled("codex_metadata"):
         return {}
     raw_path = payload.get("transcript_path") or payload.get("transcriptPath")
     if not isinstance(raw_path, str) or not raw_path:
         return {}
     try:
-        root = (Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "sessions").resolve()
+        root = (Path(sessions_root) if sessions_root else Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "sessions").resolve()
         path = Path(raw_path)
         if not path.is_absolute() or path.suffix != ".jsonl" or path.is_symlink():
             return {}
@@ -196,8 +196,32 @@ def codex_usage(payload: dict, session_id: str, observed: float) -> dict:
             except (ValueError, KeyError, TypeError, AttributeError, OverflowError, RecursionError):
                 continue
         return snapshot
-    except (OSError, ValueError, RecursionError):
+    # Path.resolve() uses RuntimeError for symlink loops on Python 3.12.
+    except (OSError, ValueError, RuntimeError):
         return {}
+
+
+def refresh_usage(observed: float) -> dict:
+    """Rescan registered, consented sources without sending lifecycle events."""
+    result = {"status": "disabled", "checked": 0, "updated": 0, "unavailable": 0}
+    if not usage_enabled("codex_metadata"):
+        return result
+    cli = runpy.run_path(str(Path(__file__).resolve().parent / "agent-status"))
+    with cli["state_lock"]():
+        sources = cli["usage_sources"](cli["load_state"]())
+    snapshots = {}
+    for sid, source in sources.items():
+        value = codex_usage({"transcript_path": source["path"]}, sid, observed, source["root"])
+        result["checked"] += 1
+        if value:
+            snapshots[("codex", sid)] = value
+        else:
+            result["unavailable"] += 1
+    if not usage_enabled("codex_metadata"):
+        return {"status": "disabled", "checked": result["checked"], "updated": 0, "unavailable": result["unavailable"]}
+    result["updated"] = cli["apply_usage_batch"](snapshots, observed) if snapshots else 0
+    result["status"] = "updated" if result["updated"] else "unchanged" if sources else "no-sources"
+    return result
 
 
 def claude_usage(payload: dict, observed: float) -> dict:
@@ -279,11 +303,21 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--agent", choices=["codex", "claude"], required=True)
     parser.add_argument("--event")
+    parser.add_argument("--refresh-usage", action="store_true", help="Rescan known optional Codex usage sources")
     parser.add_argument("--status-line", action="store_true", help="Read Claude Code status-line metadata")
     parser.add_argument("--status-line-command", default="", help="Preserve an existing status-line shell command")
     parser.add_argument("--state", choices=["idle", "working", "approval", "error"])
     parser.add_argument("--session", default="")
     args = parser.parse_args()
+    if args.refresh_usage:
+        if args.agent != "codex" or args.event or args.status_line or args.status_line_command or args.session or args.state:
+            parser.error("--refresh-usage requires --agent codex without lifecycle or status-line options")
+        try:
+            print(json.dumps(refresh_usage(observed_at)))
+            return 0
+        except (OSError, ValueError, TimeoutError):
+            print("agent-status-hook: cannot refresh local usage", file=sys.stderr)
+            return 1
     if args.status_line:
         if args.agent != "claude" or args.event:
             parser.error("--status-line requires --agent claude and no --event")
@@ -316,7 +350,8 @@ def main() -> int:
         legacy_id = legacy_session_from_payload(payload, args.agent) if not args.session else ""
         usage = codex_usage(payload, session_id, observed_at) if args.agent == "codex" else {}
         update(args.agent, state, args.event, session_id, args.event, turn_id, observed_at,
-               project, action_id, "decision" if decision else "", legacy_id, usage)
+               project, action_id, "decision" if decision else "", legacy_id, usage,
+               (payload.get("transcript_path") or payload.get("transcriptPath") or "") if usage else "")
     except (OSError, ValueError, TimeoutError) as exc:
         print(f"agent-status-hook: {type(exc).__name__}; update ignored", file=sys.stderr)
         return 1
