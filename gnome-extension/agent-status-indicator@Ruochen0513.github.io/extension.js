@@ -35,6 +35,8 @@ export default class AgentStatusExtension extends Extension {
         this._usageRefreshing = false;
         this._refreshMessage = '';
         this._refreshError = '';
+        this._feedbackId = 0;
+        this._tooltipId = 0;
         this._missing = true;
         this._reading = false;
         this._stateDirty = true;
@@ -79,6 +81,9 @@ export default class AgentStatusExtension extends Extension {
             if (open) {
                 this._render();
                 this._constrainMenuWidth();
+            } else {
+                this._hideRefreshTooltip();
+                this._clearRefreshFeedback();
             }
         });
         this._panelIcons = {
@@ -94,11 +99,33 @@ export default class AgentStatusExtension extends Extension {
         this._summary = new PopupMenu.PopupMenuItem('Agent status', {activate: false, hover: false, can_focus: false});
         this._summary.remove_style_class_name('popup-inactive-menu-item');
         this._summary.label.add_style_class_name('agent-status-heading');
+        this._summary.label.x_expand = true;
+        this._refreshIcon = new St.Icon({icon_name: 'view-refresh-symbolic', icon_size: 16});
+        // Stop its frame timer immediately before replacing the child.
+        this._refreshSpinner = new Spinner(16, {animate: false});
+        this._refreshButton = new St.Button({
+            style_class: 'button agent-status-refresh', can_focus: true, track_hover: true,
+            accessible_name: 'Refresh local data', child: this._refreshIcon,
+        });
+        this._refreshButton.connect('clicked', () => this._refreshLocal());
+        for (const signal of ['notify::hover', 'key-focus-in', 'key-focus-out'])
+            this._refreshButton.connect(signal, () => this._syncRefreshTooltip());
+        this._summary.add_child(this._refreshButton);
+        this._refreshTooltip = new St.Label({
+            text: 'Refresh local data', style_class: 'dash-label', visible: false,
+        });
+        Main.uiGroup.add_child(this._refreshTooltip);
+        this._refreshFeedback = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._refreshHint = this._refreshFeedback.label;
+        this._refreshHint.add_style_class_name('dim-label');
+        this._refreshHint.clutter_text.line_wrap = true;
+        this._refreshHint.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         this._detail = new PopupMenu.PopupMenuItem('', {reactive: false});
         this._detail.label.clutter_text.line_wrap = true;
         this._detail.label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         this._sessions = new PopupMenu.PopupSubMenuMenuItem('Sessions');
         this._button.menu.addMenuItem(this._summary);
+        this._button.menu.addMenuItem(this._refreshFeedback);
         for (const [state, text] of Object.entries(SUMMARY_LABELS)) {
             const item = new PopupMenu.PopupBaseMenuItem({activate: false, hover: false, can_focus: false});
             item.remove_style_class_name('popup-inactive-menu-item');
@@ -113,24 +140,6 @@ export default class AgentStatusExtension extends Extension {
             this._button.menu.addMenuItem(item);
         }
         this._button.menu.addMenuItem(this._detail);
-        const refreshRow = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
-        const refreshLabels = new St.BoxLayout({vertical: true, x_expand: true});
-        this._lastReported = new St.Label({style_class: 'dim-label agent-status-usage-time'});
-        this._refreshHint = new St.Label({style_class: 'dim-label agent-status-usage-time'});
-        this._refreshHint.clutter_text.line_wrap = true;
-        this._refreshHint.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
-        refreshLabels.add_child(this._lastReported);
-        refreshLabels.add_child(this._refreshHint);
-        refreshRow.add_child(refreshLabels);
-        this._refreshButton = new St.Button({
-            style_class: 'button', can_focus: true, accessible_name: 'Refresh local data',
-            child: new St.Icon({icon_name: 'view-refresh-symbolic', style_class: 'popup-menu-icon'}),
-        });
-        this._refreshButton.connect('clicked', () => this._refreshLocal());
-        this._refreshSpinner = new Spinner(16, {animate: true, hideOnStop: true});
-        refreshRow.add_child(this._refreshSpinner);
-        refreshRow.add_child(this._refreshButton);
-        this._button.menu.addMenuItem(refreshRow);
         this._button.menu.addMenuItem(this._sessions);
         this._mute = this._button.menu.addAction('Mute all alerts', () => this._toggleMute());
         this._troubleshooting = new PopupMenu.PopupSubMenuMenuItem('Troubleshooting');
@@ -141,6 +150,8 @@ export default class AgentStatusExtension extends Extension {
             this._render();
         });
         this._troubleshooting.menu.addMenuItem(this._resetControls);
+        this._lastReported = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._troubleshooting.menu.addMenuItem(this._lastReported);
         this._notificationDetail = new PopupMenu.PopupMenuItem('', {reactive: false});
         this._notificationDetail.label.clutter_text.line_wrap = true;
         this._notificationDetail.label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
@@ -158,7 +169,7 @@ export default class AgentStatusExtension extends Extension {
     }
 
     disable() {
-        for (const id of [this._refreshId, this._recoveryId]) {
+        for (const id of [this._refreshId, this._recoveryId, this._feedbackId, this._tooltipId]) {
             if (id)
                 GLib.source_remove(id);
         }
@@ -169,7 +180,14 @@ export default class AgentStatusExtension extends Extension {
         this._settingsChangedId = 0;
         this._settings = null;
         this._legacyPreferences = null;
+        this._feedbackId = 0;
+        this._tooltipId = 0;
         this._refreshSpinner?.stop();
+        this._refreshTooltip?.destroy();
+        this._refreshTooltip = null;
+        this._refreshButton?.set_child(null);
+        this._refreshIcon?.destroy();
+        this._refreshSpinner?.destroy();
         this._cancellable?.cancel();
         this._cancellable = null;
         this._clearMonitors();
@@ -187,6 +205,12 @@ export default class AgentStatusExtension extends Extension {
         this._panelIcons = null;
         this._panelIcon = null;
         this._summary = null;
+        this._refreshButton = null;
+        this._refreshIcon = null;
+        this._refreshSpinner = null;
+        this._refreshFeedback = null;
+        this._refreshHint = null;
+        this._lastReported = null;
         this._detail = null;
         this._sessions = null;
         this._troubleshooting = null;
@@ -332,8 +356,6 @@ export default class AgentStatusExtension extends Extension {
                         throw new Error('Invalid session records');
                     if (cancellable !== this._cancellable || cancellable.is_cancelled())
                         return;
-                    if (!this._usageRefreshing)
-                        this._refreshMessage = '';
                     this._lastState = candidate;
                     this._missing = false;
                     this._stateError = '';
@@ -368,12 +390,51 @@ export default class AgentStatusExtension extends Extension {
         }
     }
 
+    _clearRefreshFeedback() {
+        if (this._feedbackId)
+            GLib.source_remove(this._feedbackId);
+        this._feedbackId = 0;
+        this._refreshMessage = '';
+        if (this._refreshFeedback)
+            this._refreshFeedback.visible = false;
+    }
+
+    _hideRefreshTooltip() {
+        if (this._tooltipId)
+            GLib.source_remove(this._tooltipId);
+        this._tooltipId = 0;
+        if (this._refreshTooltip)
+            this._refreshTooltip.visible = false;
+    }
+
+    _syncRefreshTooltip() {
+        this._hideRefreshTooltip();
+        if (!this._cancellable || this._usageRefreshing || !this._button.menu.isOpen
+            || !(this._refreshButton.hover || this._refreshButton.has_key_focus()))
+            return;
+        this._tooltipId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+            this._tooltipId = 0;
+            const [x, y] = this._refreshButton.get_transformed_position();
+            const [width, height] = this._refreshButton.get_transformed_size();
+            const [, tooltipWidth] = this._refreshTooltip.get_preferred_width(-1);
+            const [, tooltipHeight] = this._refreshTooltip.get_preferred_height(tooltipWidth);
+            const area = Main.layoutManager.getWorkAreaForMonitor(Main.layoutManager.findIndexForActor(this._button));
+            this._refreshTooltip.set_position(
+                Math.max(area.x + 6, Math.min(x + (width - tooltipWidth) / 2, area.x + area.width - tooltipWidth - 6)),
+                Math.min(y + height + 6, area.y + area.height - tooltipHeight - 6));
+            Main.uiGroup.set_child_above_sibling(this._refreshTooltip, null);
+            this._refreshTooltip.visible = true;
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
     async _refreshLocal() {
         if (this._usageRefreshing || !this._cancellable)
             return;
         const cancellable = this._cancellable;
         this._usageRefreshing = true;
-        this._refreshMessage = 'Checking local data…';
+        this._clearRefreshFeedback();
+        this._hideRefreshTooltip();
         this._refreshError = '';
         this._refreshSpinner.play();
         this._render();
@@ -383,7 +444,7 @@ export default class AgentStatusExtension extends Extension {
         } catch (error) {
             if (cancellable !== this._cancellable || cancellable.is_cancelled())
                 return;
-            message = 'Usage refresh unavailable; saved status reloaded.';
+            message = 'Refresh unavailable; see Troubleshooting.';
             this._refreshError = 'Check that the updated companion is installed. '
                 + 'Claude usage updates through its status line. ' + String(error.message).slice(0, 160);
         } finally {
@@ -395,6 +456,12 @@ export default class AgentStatusExtension extends Extension {
                 if (cancellable === this._cancellable && !cancellable.is_cancelled()) {
                     this._usageRefreshing = false;
                     this._refreshMessage = message;
+                    this._feedbackId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 4000, () => {
+                        this._feedbackId = 0;
+                        this._refreshMessage = '';
+                        this._render();
+                        return GLib.SOURCE_REMOVE;
+                    });
                     this._refreshSpinner.stop();
                     this._render();
                 }
@@ -461,9 +528,13 @@ export default class AgentStatusExtension extends Extension {
             : this._missing ? 'Waiting for agent status' : headline);
         this._detail.label.set_text(description);
         this._detail.visible = Boolean(description);
-        this._lastReported.set_text(Number.isFinite(this._lastState.updated_at)
+        this._lastReported.label.set_text(Number.isFinite(this._lastState.updated_at)
             ? reportedTime(this._lastState.updated_at).replace('Last reported', 'Status updated') : 'No status updates received');
-        this._refreshHint.set_text(this._refreshMessage || 'Usage reflects the last agent report.');
+        this._refreshHint.set_text(this._refreshMessage);
+        this._refreshFeedback.visible = Boolean(this._refreshMessage) && !this._usageRefreshing;
+        const refreshChild = this._usageRefreshing ? this._refreshSpinner : this._refreshIcon;
+        if (this._refreshButton.get_child() !== refreshChild)
+            this._refreshButton.set_child(refreshChild);
         this._refreshButton.reactive = !this._usageRefreshing;
         this._refreshButton.can_focus = !this._usageRefreshing;
         this._refreshButton.set_accessible_name(this._usageRefreshing ? 'Refreshing local data' : 'Refresh local data');

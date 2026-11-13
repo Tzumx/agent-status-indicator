@@ -66,3 +66,12 @@
 .agent-status-usage-time {
   font-size: 0.85em;
 }
+
+.agent-status-refresh {
+  padding: 6px;
+  min-width: 16px;
+  min-height: 16px;
+  border-width: 0;
+  border-radius: 99px;
+  background-color: transparent;
+}

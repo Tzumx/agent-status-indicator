@@ -145,6 +145,18 @@ All 61 Python tests passed on the host (Python 3.12.3) and guest (Python 3.14.4)
 
 The main Shell process/start time, enabled-extension list and hook-file hashes remained unchanged. The final package was not installed or reloaded in the main desktop. Physical input/audio and volume, the normal desktop settings backend, lock/suspend/resume, real agent hook firing/trust and usage availability, and updated desktop resource/latency measurements remain release checks. Synthetic metadata fixtures do not establish support for every agent version or refresh account quota after a reported deadline.
 
+### Session lifecycle and local usage refresh (2026-11-13)
+
+The verified archive has SHA-256 `6ff1cd0379a90a34d6102fc11753dea9c31b2a6317981aa68459d49d6e5f2ada`. The host and GNOME 50 guest both passed all 81 Python tests. The JavaScript harness, native GIO, six-entry-point compilation, shell syntax, packaging and archive validation also passed.
+
+Lifecycle regressions cover supported/unsupported model-request hooks, resumed root turns, preserved same-turn attention, retired/delayed turns, subagent isolation, confirmed exit after response completion, late events after exit and independent sessions. Usage coverage includes opt-in consent and withdrawal, bounded/revalidated known files, custom Codex directories, missing/malformed sources, unchanged snapshots, concurrent turns and closed-session exclusion. A symlink-loop regression verifies that an unavailable optional source cannot abort a lifecycle hook on the tested Python versions. Native GIO tests exercise helper output bounds, timeouts, cancellation and missing companions; packaging checks allow only the fixed usage-only invocation.
+
+The exact archive passed 213 native GNOME 46 checks and 207 on GNOME 50, including fresh installation, forced upgrade and removal. Both exercised closed-session visibility, manual refresh with newer/unchanged data, preserved lifecycle and alert history, source report ages, notification diagnostics, header alignment, keyboard tooltip, fixed icon/spinner dimensions, stopped idle animation and result expiry. A focused regression first reproduced automatic state reads dismissing refresh feedback early; it now verifies that the result remains until its deadline or menu close, including a native automatic-reload scenario.
+
+All installed archive hashes matched source. The GNOME 50 result matched its fresh run identifier and the guest had no network routes. Screenshots were inspected. The isolated tests preserved the host Shell process/start time, enabled extensions and agent configuration.
+
+Synthetic metadata does not establish fresh provider quota or availability in every CLI version. Actual prompt-free resume and exit in existing user sessions, physical input/audio, lock/suspend/resume, and updated CPU/memory/power measurements remain release checks. The tests did not force those actions or inject events into the real session cache. Updated GNOME modules load at the next normal login.
+
 ## Hook measurements
 
 A Linux-only benchmark compares temporary copies of the working tree with a local Git revision. It never fetches, checks out files, modifies agent configuration, or invokes a model:

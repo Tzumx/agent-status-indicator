@@ -316,13 +316,13 @@ export function reportedTime(updated, now = Date.now() / 1000) {
 
 export function refreshFeedback(result) {
     if (result.status === 'disabled')
-        return 'Codex collection is off. Claude updates when its next report arrives.';
+        return 'Status reloaded. Codex usage collection is off.';
     if (result.status === 'no-sources')
-        return 'No known Codex usage yet; waiting for its next update.';
+        return 'No Codex usage reports yet.';
     if (result.updated)
         return `Updated ${result.updated} Codex ${result.updated === 1 ? 'session' : 'sessions'}.`
             + (result.unavailable ? ' Some reports were unavailable.' : '');
     if (result.unavailable)
-        return 'Some usage reports are unavailable; keeping the last reports.';
-    return 'No newer Codex reports. Claude updates when its next report arrives.';
+        return 'Some usage reports are unavailable; keeping previous values.';
+    return 'No newer usage reports.';
 }

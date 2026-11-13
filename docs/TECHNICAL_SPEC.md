@@ -62,7 +62,7 @@ This is a downstream extension of an active upstream codebase, not a replacement
 
 Show one compact icon in the right status area of the GNOME top bar, before the system controls. Its color/state reflects the highest-priority session requiring attention. Settings → Display offers Circle (the default) or a bundled symbolic Robot head; both use the same status colors and accessible state text. The menu opens on click and shows:
 
-- A session-count headline and optional separate labeled counts by state, omitting empty categories.
+- A session-count headline with a compact refresh button at its right and optional separate labeled counts by state, omitting empty categories. The refresh icon becomes a spinner in the same space while busy; tooltip and keyboard access identify the action. Show result text briefly after a click, with persistent errors and global update time under Troubleshooting. Keep report ages beside quota and context; omit permanent generic refresh text.
 - Separate groups for Claude Code and Codex; hide empty groups by default, with a preference to show them.
 - One row per session with a project name, independently visible status and short stable session identifier, and a timestamp. Last-event descriptions are optional to avoid repeating the status.
 - Distinct rows when two sessions share the same working directory or project name.

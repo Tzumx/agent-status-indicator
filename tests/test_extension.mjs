@@ -180,8 +180,10 @@ async function updateState(value) {
     await settle();
 }
 class MenuItem {
+    add_child(child) { this.children.push(child); child.parent = this; }
     constructor(text) {
         this.label = new Label({text});
+        this.children = [this.label];
         this.label.set_text = value => { this.text = value; this.label.text = value; };
         this.text = text;
     }
@@ -235,7 +237,27 @@ class Menu {
 }
 class Actor {
     constructor(props = {}) { Object.assign(this, props); this.children = []; this.signals = new Map(); }
-    add_child(child) { this.children.push(child); }
+    add_child(child) { this.children.push(child); child.parent = this; }
+    get_parent() { return this.parent; }
+    get_child() { return this.child || null; }
+    set_child(child) {
+        if (this.child) this.child.parent = null;
+        this.child = child;
+        if (child) child.parent = this;
+    }
+    has_key_focus() { return Boolean(this.focused); }
+    get_transformed_position() { return [200, 50]; }
+    get_transformed_size() { return [28, 28]; }
+    get_preferred_width() { return [120, 120]; }
+    get_preferred_height() { return [24, 24]; }
+    set_position(x, y) { this.position = [x, y]; }
+    set_child_above_sibling() {}
+    destroy() {
+        this.destroyed = true;
+        if (this.parent)
+            this.parent.children = this.parent.children.filter(child => child !== this);
+        this.signals.clear();
+    }
     remove_style_class_name(value) { this.removedStyle = value; }
     add_style_class_name(value) { this.addedStyle = value; }
     set_style(value) { this.style = value; }
@@ -248,7 +270,7 @@ class Label extends Actor {
 }
 class ActionButton extends Actor {
     click() { this.signals.get('clicked')(); }
-    focus() { this.signals.get('key-focus-in')?.(); }
+    focus() { this.focused = true; this.signals.get('key-focus-in')?.(); }
 }
 class Section extends Menu {}
 class SubMenu extends MenuItem {
@@ -271,8 +293,8 @@ class Button {
     show() { this.visible = true; }
     destroy() { this.destroyed = true; registrations.delete('test-extension'); }
 }
-class Icon {
-    constructor(props) { Object.assign(this, props); }
+class Icon extends Actor {
+    constructor(props) { super(props); }
     set_style(value) { this.style = value; }
 }
 class Notification {
@@ -416,6 +438,7 @@ const imports = {
     'gi://Clutter': {default: {ActorAlign: {CENTER: 1}}},
     'gi://Pango': {default: {EllipsizeMode: {START: 1, END: 2, MIDDLE: 3, NONE: 0}}},
     'resource:///org/gnome/shell/ui/main.js': {
+        uiGroup: new Actor(),
         panel: {addToStatusArea(id, button, position, side) {
             assert.equal(side, 'right'); assert.equal(position, 0);
             assert(!registrations.has(id)); registrations.set(id, button);
@@ -424,7 +447,7 @@ const imports = {
             findIndexForActor: actor => { assert(actor instanceof Button); return menuGeometry.monitor; },
             getWorkAreaForMonitor: index => {
                 assert.equal(index, menuGeometry.monitor, 'use the indicator monitor');
-                return {width: menuGeometry.width};
+                return {x: 0, y: 0, width: menuGeometry.width, height: 768};
             },
         },
         messageTray: {add() {}},
@@ -505,16 +528,48 @@ assert.match(instance._dot.style, /#2ea043/);
 assert.equal(sources.length, 0, 'no notification at startup');
 assert.equal(timers.size, 0, 'no periodic refresh source');
 assert.equal(refreshChildren.length, 0, 'enabling the extension never starts a helper');
+assert(instance._summary.children.includes(instance._refreshButton), 'refresh shares the session heading');
+assert.equal(instance._summary.label.x_expand, true, 'heading pushes refresh to its right');
+assert.equal(instance._refreshButton.get_child(), instance._refreshIcon);
+assert.equal(instance._refreshFeedback.visible, false, 'normal menu has no refresh text block');
+assert(instance._troubleshooting.menu.items.includes(instance._lastReported), 'global update time belongs in Troubleshooting');
+
 const refreshPromise = instance._refreshLocal();
 assert.equal(instance._refreshSpinner.playing, true);
 assert.equal(instance._refreshButton.reactive, false);
+assert.equal(instance._refreshButton.get_child(), instance._refreshSpinner, 'busy spinner replaces the icon');
 await instance._refreshLocal();
 assert.equal(refreshChildren.length, 1, 'duplicate clicks cannot start another helper');
 await settle();
 await refreshPromise;
 assert.equal(instance._refreshSpinner.playing, false);
 assert.equal(instance._refreshButton.reactive, true);
-assert.match(instance._refreshHint.text, /No newer Codex reports/);
+assert.match(instance._refreshHint.text, /No newer usage reports/);
+assert.equal(instance._refreshButton.get_child(), instance._refreshIcon);
+assert.equal(instance._refreshFeedback.visible, true, 'click results are visible briefly');
+const completedRefreshText = instance._refreshHint.text;
+await updateState({...instance._lastState, updated_at: (instance._lastState.updated_at || 0) + 1});
+assert.equal(instance._refreshHint.text, completedRefreshText, 'normal state updates preserve the fresh click result');
+assert.equal(instance._refreshFeedback.visible, true, 'refresh feedback lasts until its own deadline or menu close');
+runTimers(4000);
+assert.equal(instance._refreshFeedback.visible, false, 'result text expires without polling');
+instance._button.menu.open();
+instance._refreshButton.hover = true;
+instance._syncRefreshTooltip();
+runTimers(500);
+assert.equal(instance._refreshTooltip.visible, true, 'hover reveals the action tooltip');
+assert.equal(instance._refreshTooltip.text, 'Refresh local data');
+assert(instance._refreshTooltip.position.every(Number.isFinite));
+instance._refreshButton.hover = false;
+instance._syncRefreshTooltip();
+assert.equal(instance._refreshTooltip.visible, false);
+instance._refreshButton.focus();
+runTimers(500);
+assert.equal(instance._refreshTooltip.visible, true, 'keyboard focus reveals the tooltip');
+instance._button.menu.close();
+assert.equal(instance._refreshTooltip.visible, false, 'closing the menu hides its tooltip');
+instance._refreshButton.focused = false;
+
 assert.equal(timers.size, 0, 'refresh leaves no polling or deadline timer behind');
 assert.equal(sources.length, 0, 'manual refresh does not replay startup alerts');
 
@@ -1104,7 +1159,7 @@ assert.equal(reportedTime(2800, 10000), 'Last reported 2 h ago');
 assert.equal(reportedTime(1, 86401), 'Last reported 1 day ago');
 assert.equal(reportedTime(1, 172801), 'Last reported 2 days ago');
 assert.equal(reportedTime(10001, 10000), 'Last reported just now');
-assert.match(refreshFeedback({status: 'no-sources'}), /No known Codex usage yet/);
+assert.match(refreshFeedback({status: 'no-sources'}), /No Codex usage reports yet/);
 const historyMissing = new AlertCursor();
 assert.equal(historyMissing.read({sessions: {}}).warning, 'Notification tracking unavailable.');
 
@@ -1143,7 +1198,9 @@ refreshMissing = true;
 const missingRefresh = instance._refreshLocal();
 await settle();
 await missingRefresh;
-assert.match(instance._refreshHint.text, /Usage refresh unavailable/);
+assert.match(instance._refreshHint.text, /Refresh unavailable/);
+runTimers(4000);
+assert.equal(instance._refreshFeedback.visible, false);
 assert.equal(instance._refreshDetail.visible, true);
 assert.equal(instance._lastState.sessions.codex.s.state, 'working', 'missing helper preserves status');
 refreshMissing = false;
@@ -1153,6 +1210,7 @@ await drain();
 instance.disable();
 await closingRefresh;
 assert(refreshChildren.at(-1).killed, 'disable terminates only its owned helper');
+assert.equal(imports['resource:///org/gnome/shell/ui/main.js'].uiGroup.children.length, 0, 'disable destroys tooltip actors');
 assert.equal(timers.size, 0);
 refreshWait = false;
 
