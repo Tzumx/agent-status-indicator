@@ -120,6 +120,7 @@ The supplied mappings are:
 | --- | --- |
 | `SessionStart` (startup/resume/clear/fork) | `idle` initialization; compaction leaves active work unchanged |
 | `UserPromptSubmit`, ordinary `PreToolUse`, `PostToolUse` | `working`; generic tool starts preserve pending input |
+| Codex `PreModelRequest` (when supported) | Establish a new turn as `working`; same-turn retries leave status unchanged |
 | Claude `PreToolUse` for `AskUserQuestion` / `ExitPlanMode` | `approval` with decision metadata |
 | `PermissionRequest`, permission-prompt `Notification` only | `approval` |
 | `Stop`, `SessionEnd`, `Interrupt` (Codex; when supported by the installed version) | `idle` |
@@ -156,7 +157,7 @@ agent-status doctor --check-codex
 
 `hooks.codex.runtime.status` must be `ready`; `needs_trust` means you must review the `agent-status-hook` entries in Codex `/hooks`. This check queries a fresh local Codex configuration without running a model or changing trust. Existing chats may still require restarting after hook changes. The basic `doctor` command only inspects files and explicitly reports runtime trust as `not_checked`.
 
-The installer queries the installed Codex protocol to select supported events. Some releases register the six core events but ignore `SessionEnd` and `Interrupt`; these are omitted on those releases. If capability detection is unavailable, the installer uses the six core events. The adapter still understands optional terminal events when a newer client can emit them.
+The installer queries the installed Codex protocol to select supported events. Optional `PreModelRequest`, `SessionEnd` and `Interrupt` hooks are omitted when that release does not register them. If capability detection is unavailable, the installer uses the six core events. The adapter still understands optional terminal events when a newer client can emit them.
 
 Manual source files:
 

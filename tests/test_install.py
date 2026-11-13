@@ -45,6 +45,29 @@ class InstallTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue((home / 'cache/agent-status-indicator/state.json').exists())
 
+    def test_codex_model_request_hook_is_installed_when_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            fake_bin = home / 'fake-bin'
+            fake_bin.mkdir()
+            executable = fake_bin / 'codex'
+            executable.write_text(f"#!{sys.executable}\n" + "import sys,json\nfrom pathlib import Path\np=Path(sys.argv[sys.argv.index('--out')+1])/'v2'/'HooksListResponse.json'\np.parent.mkdir(parents=True,exist_ok=True)\np.write_text(json.dumps({'definitions':{'HookEventName':{'enum':['sessionStart','userPromptSubmit','preModelRequest','preToolUse','permissionRequest','postToolUse','stop']}}}))\n")
+            executable.chmod(0o755)
+            env = {**os.environ, 'HOME': str(home), 'CODEX_HOME': str(home / '.codex'),
+                   'PATH': str(fake_bin) + os.pathsep + os.environ['PATH'],
+                   'XDG_DATA_HOME': str(home / 'data'), 'XDG_CONFIG_HOME': str(home / 'config'),
+                   'XDG_CACHE_HOME': str(home / 'cache'), 'PYTHON_BIN': sys.executable}
+            result = subprocess.run(['bash', str(ROOT / 'install.sh'), '--gnome-only', '--no-start',
+                                     '--merge-codex-hooks'], env=env, capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            config = json.loads((home / '.codex/hooks.json').read_text())
+            entry = config['hooks']['PreModelRequest'][0]
+            self.assertNotIn('matcher', entry)
+            self.assertEqual(entry['hooks'][0]['command'],
+                             str(home / '.local/bin/agent-status-hook') + ' --agent codex --event PreModelRequest')
+            self.assertIn('UserPromptSubmit', config['hooks'])
+            self.assertFalse((home / '.claude').exists())
+
     def test_uninstall_without_user_manager_preserves_hooks_and_respects_xdg(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
@@ -122,7 +145,8 @@ class InstallTests(unittest.TestCase):
                 self.assertNotIn('SubagentStop', config['hooks'])
                 self.assertNotIn('Interrupt', config['hooks'])
                 self.assertNotIn('SessionEnd', config['hooks'])
-                self.assertIn('omitted: SessionEnd, Interrupt', result.stdout)
+                self.assertNotIn('PreModelRequest', config['hooks'])
+                self.assertIn('omitted: PreModelRequest, SessionEnd, Interrupt', result.stdout)
                 self.assertIn('reviewed and trusted', result.stdout)
             self.assertEqual(json.loads((extension / 'metadata.json').read_text())['uuid'], legacy_uuid)
             self.assertTrue((extension / 'state.js').exists())

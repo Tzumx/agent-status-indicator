@@ -184,6 +184,7 @@ No persistent polling process is required in the GNOME deployment. Hook commands
 - Keep project metadata optional and privacy-minimized; never store conversation text.
 - Preserve atomic writes, locking, and last-writer consistency under concurrent hook invocations.
 - Ignore stale events from older turns where a newer turn is already authoritative.
+- On supported Codex releases, use a root-session model-request hook as an additional explicit turn boundary after resume. Same-turn retries must not clear attention, reopen stopped/reset turns, or affect another session; retain retired-turn and timestamp guards.
 - Handle session start, normal end, interruption, error, subagent events, and context compaction according to actual source semantics.
 - Do not arbitrarily expire long-running work solely because time has passed.
 - For abrupt termination without a final lifecycle event, expose manual reset/clear rather than declaring the task finished.
@@ -197,6 +198,7 @@ Use only events supported by the installed release of each agent. Verify registr
 | --- | --- |
 | Session start/resume | Initialize or retain the session as appropriate; no completion notification |
 | User prompt submitted | Transition the correct session to working |
+| Codex model request, when supported | Establish a new identified root turn as working; leave an already known turn unchanged |
 | Ordinary tool begins/ends | Preserve working state; no sound |
 | Permission request | Mark permission required; notify once |
 | Explicit user-question tool, when available | Mark decision required; notify once |

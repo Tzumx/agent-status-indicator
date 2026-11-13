@@ -41,13 +41,16 @@ def transition_session(previous: dict, state: str, message: str, event: str,
     retired = string_list(previous.get("retired_turns"), 32)
     if observed < previous.get("updated_at", 0) or (turn_id and turn_id in retired):
         return None
-    if turn_id and previous_turn and turn_id != previous_turn and event != "UserPromptSubmit":
+    if event == "PreModelRequest" and (not turn_id or turn_id == previous_turn):
+        return None  # Model retries must not clear attention or reopen a stopped turn.
+    if (turn_id and previous_turn and turn_id != previous_turn
+            and event not in {"UserPromptSubmit", "PreModelRequest"}):
         return None
     if event == "UserPromptSubmit" and turn_id and turn_id == previous_turn:
         return None  # Replayed prompts must not reopen a blocked or stopped turn.
     if event == "SessionStart" and previous.get("state") in {"working", "approval", "error"}:
         return None
-    if (event and event not in {"UserPromptSubmit", "SessionStart"}
+    if (event and event not in {"UserPromptSubmit", "PreModelRequest", "SessionStart"}
             and previous.get("state") == "idle"
             and previous.get("event") in {"Stop", "Interrupt", "SessionEnd", "Reset"}
             and turn_id and turn_id == previous_turn):

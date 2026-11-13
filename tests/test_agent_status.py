@@ -171,6 +171,75 @@ class AgentStatusTests(unittest.TestCase):
         agent_status.apply_update("codex", "error", session_id="s", observed_at=ts)
         self.assertEqual(agent_status.load_state()["agents"]["codex"]["state"], "working")
 
+    def test_model_request_establishes_resumed_turn_without_prompt(self):
+        ts = time.time()
+        agent_status.apply_update("codex", "working", session_id="s",
+                                  event="UserPromptSubmit", turn_id="before", observed_at=ts)
+        agent_status.apply_update("codex", "approval", session_id="s",
+                                  event="PermissionRequest", turn_id="before", action_id="old",
+                                  observed_at=ts + 1, project="demo")
+        state = agent_status.apply_update("codex", "working", session_id="s",
+                                          event="PreModelRequest", turn_id="resumed", observed_at=ts + 2)
+        record = state["sessions"]["codex"]["s"]
+        self.assertEqual(record["turn_id"], "resumed")
+        self.assertEqual(record["state"], "working")
+        self.assertEqual(record["project"], "demo")
+        self.assertIn("before", record["retired_turns"])
+        self.assertEqual(state["alerts"]["sequence"], 1)
+        agent_status.apply_update("codex", "approval", session_id="s",
+                                  event="PermissionRequest", turn_id="resumed", action_id="new",
+                                  observed_at=ts + 3)
+        state = agent_status.apply_update("codex", "idle", session_id="s",
+                                          event="Stop", turn_id="resumed", observed_at=ts + 4)
+        self.assertEqual(state["sessions"]["codex"]["s"]["event"], "Stop")
+        self.assertEqual([item["kind"] for item in state["alerts"]["events"]],
+                         ["permission", "permission", "completion"])
+
+    def test_model_request_does_not_reopen_same_turn_or_clear_attention(self):
+        ts = time.time()
+        for state_name, event in (("working", "PreToolUse"), ("approval", "PermissionRequest"),
+                                  ("error", "Error"), ("idle", "Stop"), ("idle", "Reset")):
+            with self.subTest(event=event):
+                agent_status.apply_update("codex", "working", session_id=event,
+                                          event="UserPromptSubmit", turn_id="turn", observed_at=ts)
+                before = agent_status.apply_update("codex", state_name, session_id=event,
+                                                   event=event, turn_id="turn", action_id="a",
+                                                   observed_at=ts + 1)
+                after = agent_status.apply_update("codex", "working", session_id=event,
+                                                  event="PreModelRequest", turn_id="turn", observed_at=ts + 2)
+                self.assertEqual(after["sessions"]["codex"][event], before["sessions"]["codex"][event])
+                self.assertEqual(after["alerts"], before["alerts"])
+
+    def test_model_request_preserves_turn_ordering_guards(self):
+        ts = time.time()
+        agent_status.apply_update("codex", "working", session_id="s",
+                                  event="UserPromptSubmit", turn_id="first", observed_at=ts)
+        before = agent_status.apply_update("codex", "working", session_id="s",
+                                           event="PreModelRequest", turn_id="second", observed_at=ts + 1)
+        for event, state_name, turn, observed in (
+                ("PreModelRequest", "working", "first", ts + 2),
+                ("PreModelRequest", "working", "", ts + 2),
+                ("PreModelRequest", "working", "delayed", ts - 1),
+                ("Stop", "idle", "unknown", ts + 2),
+                ("PostToolUse", "working", "unknown", ts + 2)):
+            with self.subTest(event=event, turn=turn):
+                after = agent_status.apply_update("codex", state_name, session_id="s",
+                                                  event=event, turn_id=turn, observed_at=observed)
+                self.assertEqual(after["sessions"]["codex"]["s"], before["sessions"]["codex"]["s"])
+                self.assertEqual(after["alerts"], before["alerts"])
+
+    def test_model_request_keeps_same_project_sessions_independent(self):
+        for agent, sid in (("codex", "one"), ("codex", "two"), ("claude", "three")):
+            agent_status.apply_update(agent, "working", session_id=sid,
+                                      event="UserPromptSubmit", turn_id=sid, project="shared")
+        before = agent_status.load_state()
+        after = agent_status.apply_update("codex", "working", session_id="one",
+                                          event="PreModelRequest", turn_id="resumed")
+        self.assertEqual(after["sessions"]["codex"]["one"]["turn_id"], "resumed")
+        self.assertEqual(after["sessions"]["codex"]["two"], before["sessions"]["codex"]["two"])
+        self.assertEqual(after["sessions"]["claude"], before["sessions"]["claude"])
+        self.assertEqual(after["alerts"], before["alerts"])
+
     def test_agent_reset_does_not_clear_other_agent(self):
         agent_status.apply_update("codex", "working", session_id="c1")
         agent_status.apply_update("claude", "working", session_id="c2")
@@ -385,6 +454,33 @@ class HookTests(unittest.TestCase):
         for name in ("AskUserQuestion", "ExitPlanMode"):
             self.assertEqual(hook.state_for_event("PreToolUse", {"tool_name": name}, "claude"), "approval")
             self.assertEqual(hook.state_for_event("PreToolUse", {"tool_name": name}, "codex"), "working")
+
+    def test_model_request_is_codex_only_and_ignores_subagents(self):
+        self.assertEqual(hook.state_for_event("PreModelRequest", {}, "codex"), "working")
+        self.assertIsNone(hook.state_for_event("PreModelRequest", {}, "claude"))
+        self.assertIsNone(hook.state_for_event("PreModelRequest", {"agent_id": "child"}, "codex"))
+        with patch.object(sys, "stdin", io.StringIO('{"agent_id":"child","request":"private"}')):
+            self.assertEqual(hook.parse_stdin(), {"agent_id": "child"})
+
+    def test_model_request_cli_recovers_turn_without_retaining_request(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = {**os.environ, "XDG_CACHE_HOME": directory}
+            path = Path(directory) / "agent-status-indicator/state.json"
+            command = [sys.executable, str(ROOT / "bin/agent-status-hook"), "--agent", "codex"]
+            for event, extra in (("UserPromptSubmit", {"turn_id": "before"}),
+                                 ("PreModelRequest", {"turn_id": "resumed", "request": "private-request"}),
+                                 ("PreModelRequest", {"turn_id": "child", "agent_id": "child"}),
+                                 ("Stop", {"turn_id": "resumed"})):
+                result = subprocess.run(command + ["--event", event],
+                                        input=json.dumps({"session_id": "s", "cwd": "/private/demo", **extra}),
+                                        text=True, capture_output=True, env=env, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+            state = json.loads(path.read_text())
+            self.assertEqual(state["sessions"]["codex"]["codex:s"]["turn_id"], "resumed")
+            self.assertEqual(state["sessions"]["codex"]["codex:s"]["event"], "Stop")
+            self.assertEqual([item["kind"] for item in state["alerts"]["events"]], ["completion"])
+            self.assertNotIn("private-request", path.read_text())
+            self.assertNotIn("child", path.read_text())
 
     def test_hook_does_not_spawn_an_interpreter_or_persist_payload_text(self):
         payload = {"session_id": "s", "cwd": "/private/demo", "message": "secret",

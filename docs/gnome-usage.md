@@ -30,6 +30,8 @@ The persistent protocol retains `idle`, `working`, `approval`, and `error`. GNOM
 
 Claude Code's `AskUserQuestion` and `ExitPlanMode` tool-start events indicate explicit decisions. Codex currently uses supported permission and lifecycle events; ordinary text questions are not detected as decisions.
 
+On Codex releases that support it, the model-request hook establishes a resumed turn even when no new prompt-submit event reaches the indicator. Requests in an already known turn leave its state unchanged, including pending approval, errors and a completed or manually reset turn. Subagent model requests do not establish the parent turn. Older releases omit this hook and rely on prompt-submit events. Review the added hook in Codex's **/hooks** menu after upgrading.
+
 When turn or tool-call IDs are available, the writer rejects retired turns, repeated prompts, and resolved attention events. Claude's permission payload can omit the tool-call ID; the preceding tool-start ID is retained when available. Events without reliable IDs have weaker ordering guarantees, particularly for parallel tool actions. The cache retains 32 retired turn IDs and 64 identified alert keys per session, not an unlimited event history.
 
 Hooks parse the producer's full JSON payload so large tool bodies or final responses do not discard lifecycle events. Only supported metadata survives parsing; conversation text and tool bodies are not persisted. This transient parsing happens in the short-lived hook, not GNOME Shell.

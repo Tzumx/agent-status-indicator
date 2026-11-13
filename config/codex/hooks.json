@@ -23,6 +23,17 @@
         ]
       }
     ],
+    "PreModelRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-status-hook --agent codex --event PreModelRequest",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "hooks": [
