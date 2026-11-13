@@ -15,6 +15,20 @@ class GnomeIOTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Native GIO", result.stdout)
 
+    @unittest.skipUnless(shutil.which("gjs") and shutil.which("dbus-run-session")
+                         and Path("/usr/share/gnome-shell/org.gnome.Shell.Extensions.src.gresource").exists(),
+                         "GNOME preferences resources are optional outside GNOME")
+    def test_native_preferences_report_literal_errors(self):
+        script = Path(__file__).with_name("test_preferences_gio.mjs")
+        env = {**os.environ, "AGENT_STATUS_TEST_BUS": "1", "GIO_USE_VFS": "local"}
+        for name, directory in (("GI_TYPELIB_PATH", "/usr/lib/gnome-shell/girepository-1.0"),
+                                ("LD_LIBRARY_PATH", "/usr/lib/gnome-shell")):
+            env[name] = os.pathsep.join(filter(None, (directory, env.get(name))))
+        result = subprocess.run(["dbus-run-session", "--", "gjs", "-m", str(script)],
+                                env=env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Native preferences", result.stdout)
+
     @unittest.skipUnless(shutil.which("gjs"), "gjs is optional outside GNOME")
     def test_native_refresh_is_bounded_and_cancellable(self):
         script = Path(__file__).with_name("test_usage_refresh_gio.mjs")

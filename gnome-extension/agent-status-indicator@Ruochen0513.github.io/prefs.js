@@ -125,12 +125,6 @@ export default class AgentStatusPreferences extends ExtensionPreferences {
             description: 'The companion and lifecycle hooks connect Claude Code and Codex to the indicator. Set them up once; opening Settings does not change agent configuration.',
         });
         integration.add(hooks);
-        hooks.add(new Adw.ActionRow({
-            title: 'Claude Code', subtitle: 'Restart existing sessions after changing hooks.',
-        }));
-        hooks.add(new Adw.ActionRow({
-            title: 'Codex', subtitle: 'Review and trust the configured hooks in Codex /hooks.',
-        }));
         const collectors = new Adw.PreferencesGroup({
             title: 'Usage sources',
             description: 'Optional and local. Disabling collection stops future reads; display switches hide cached snapshots. No account requests or background collector.',
@@ -152,17 +146,20 @@ export default class AgentStatusPreferences extends ExtensionPreferences {
         retryUsage.connect('clicked', () => this._loadUsage());
         this._usageError.add_suffix(retryUsage);
         collectors.add(this._usageError);
-        const help = new Adw.ActionRow({title: 'Setup guide', subtitle: 'Installation, hook registration and troubleshooting'});
-        const open = new Gtk.Button({icon_name: 'help-browser-symbolic', tooltip_text: 'Open setup guide', valign: Gtk.Align.CENTER});
-        open.connect('clicked', () => {
-            try {
-                Gio.AppInfo.launch_default_for_uri(`${this.metadata.url}#enabling-agent-hooks`, null);
-            } catch (error) {
-                this._showError(error);
-            }
+        const help = new Adw.ExpanderRow({
+            title: 'Setup instructions', subtitle: 'Hook registration and optional usage data',
         });
-        help.add_suffix(open);
-        help.activatable_widget = open;
+        for (const [title, subtitle] of [
+            ['Enable lifecycle hooks',
+                'From the project directory, run ./install.sh --gnome-only --merge-hooks. Existing agent configuration is backed up and merged.'],
+            ['Activate the hooks',
+                'Restart existing agent sessions. In Codex, open /hooks and review and trust the indicator’s hook entries.'],
+            ['Optional usage data',
+                'Enable the sources below. Codex reports through hooks and Refresh local data. Claude Code also needs the status-line command shown next.'],
+            ['Claude Code status-line command',
+                'Set agent-status-hook --agent claude --status-line as the statusLine command in Claude Code settings. Preserve an existing command with --status-line-command; see agent-status-hook --help.'],
+        ])
+            help.add_row(new Adw.ActionRow({title, subtitle, use_markup: false}));
         hooks.add(help);
         this._settingsChangedId = this._settings.connect('changed', () => {
             if (!this._closed)
@@ -250,7 +247,9 @@ export default class AgentStatusPreferences extends ExtensionPreferences {
             if (!this._closed) {
                 this._mute.sensitive = false;
                 this._categories.sensitive = false;
-                this._showError(error);
+                this._error.subtitle = safeText(error.message, 180);
+                this._error.visible = true;
+                this._showError(error, 'Settings could not be loaded.');
             }
         } finally {
             if (!this._closed)
@@ -322,15 +321,19 @@ export default class AgentStatusPreferences extends ExtensionPreferences {
             } catch (error) {
                 if (!error.matches?.(Gtk.DialogError, Gtk.DialogError.DISMISSED)
                     && !error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
-                    this._showError(error);
+                    this._showError(error, 'Could not choose the sound file.');
             }
         });
     }
 
-    _showError(error) {
+    _showError(error, message = 'Changes could not be saved.') {
         if (this._closed)
             return;
-        this._error.subtitle = 'Changes could not be saved. ' + safeText(error.message, 180);
-        this._error.visible = true;
+        if (error instanceof GLib.Error && Gio.DBusError.is_remote_error(error))
+            Gio.DBusError.strip_remote_error(error);
+        this._window.add_toast(new Adw.Toast({
+            title: message + ' ' + safeText(error.message, 180), timeout: 6,
+            priority: Adw.ToastPriority.HIGH, use_markup: false,
+        }));
     }
 }

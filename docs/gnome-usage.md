@@ -50,7 +50,7 @@ Under **Alerts**, expand an event category to enable its desktop notification an
 
 **Display** also controls empty agent groups, closed sessions, state counts, last-event descriptions, account quota and per-session context usage.
 
-**Integration** controls optional usage collection, explains the one-time companion/hook setup and links to the setup guide. Its presence is help, not a diagnosis that hooks are missing. The status menu does not modify agent configuration.
+**Integration** controls optional usage collection and provides brief, expandable **Setup instructions** for lifecycle hooks, Codex trust and the Claude Code status-line adapter. These instructions work offline and do not change agent configuration.
 
 Settings use the native GSettings schema `org.gnome.shell.extensions.agent-status-indicator`. Each choice has its own key, so menu mute and preferences changes do not overwrite unrelated choices. Existing JSON preferences remain read-only fallbacks until an individual setting is explicitly changed in Settings. Resetting a native key restores its legacy fallback, or the built-in default.
 
