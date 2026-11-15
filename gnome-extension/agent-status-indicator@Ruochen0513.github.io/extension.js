@@ -149,7 +149,6 @@ export default class AgentStatusExtension extends Extension {
         }
         this._button.menu.addMenuItem(this._detail);
         this._button.menu.addMenuItem(this._sessions);
-        this._mute = this._button.menu.addAction('Mute all alerts', () => this._toggleMute());
         this._troubleshooting = new PopupMenu.PopupSubMenuMenuItem('Troubleshooting');
         this._button.menu.addMenuItem(this._troubleshooting);
         this._resetControls = new PopupMenu.PopupSwitchMenuItem('Show reset controls', false);
@@ -232,7 +231,6 @@ export default class AgentStatusExtension extends Extension {
         this._metrics.clear();
         this._rowWidgets.clear();
         this._groupWidgets.clear();
-        this._mute = null;
         this._stateFile = null;
         this._configFile = null;
         this._lastState = null;
@@ -482,22 +480,6 @@ export default class AgentStatusExtension extends Extension {
         }
     }
 
-    async _toggleMute() {
-        try {
-            if (!this._settings.set_boolean('mute-all', !this._preferences.mute_all))
-                throw new Error('Cannot save alert preferences.');
-            this._preferences = settingsPreferences(this._settings, this._legacyPreferences);
-            if (this._configError === 'Cannot save alert preferences.')
-                this._configError = '';
-            this._alerts.cancelSound();
-            this._render();
-        } catch (error) {
-            this._configError = 'Cannot save alert preferences.';
-            this._reportError(error.message);
-            this._render();
-        }
-    }
-
     _reportError(message) {
         if (message !== this._lastError)
             console.error(`Agent Status: ${message}`);
@@ -563,7 +545,6 @@ export default class AgentStatusExtension extends Extension {
             metric.count.set_text(String(counts[state]));
             metric.item.visible = this._preferences.show_state_counts && counts[state] > 0;
         }
-        this._mute.label.set_text(this._preferences.mute_all ? 'Unmute alerts' : 'Mute all alerts');
         this._renderSessions(rows);
         this._button.show();
     }

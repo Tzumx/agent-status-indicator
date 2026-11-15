@@ -85,7 +85,8 @@ instance._refresh = async () => {
             };
             instance._render = () => {};
             instance._alerts = {cancelSound() {}, destroy() {}};
-            await instance._toggleMute();
+            instance._settings.set_boolean('mute-all', true);
+            instance._preferences = State.settingsPreferences(instance._settings, instance._legacyPreferences);
             const config = await readJson(configFile, instance._cancellable);
             const mode = configFile.query_info('unix::mode', Gio.FileQueryInfoFlags.NONE, null).get_attribute_uint32('unix::mode');
             if (!instance._preferences.mute_all || instance._preferences.sounds.error !== false

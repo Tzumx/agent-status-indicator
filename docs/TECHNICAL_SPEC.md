@@ -111,7 +111,7 @@ Default priority for overall display: `error` > `permission/decision required` >
 - Keep at most one current notification per session. Remove that session's obsolete notification when authoritative lifecycle state shows that the request resolved, work resumed, the next turn started, or the session ended/reset/disappeared.
 - Preserve unresolved notices from other sessions and applications. Age alone must never expire a session notice.
 - Consume historical transitions that are already superseded without raising a stale notice or sound. Cancel queued sounds if their transition is resolved before playback; delayed old events must not remove a newer notice.
-- Notifications must be configurable by event category, with a way to mute all alerts.
+- Notifications must be configurable by event category, with a way to mute all alerts in Settings → Alerts. Keep the global mute control there rather than duplicating it in the main session menu.
 - Missing/invalid internal notification history must use plain diagnostic wording under Troubleshooting while preserving session display and suppressing uncertain alerts. Complete normal-display fixtures must include valid history metadata.
 - If the desktop's notification service is unavailable, state tracking and the panel must keep working.
 

@@ -585,7 +585,7 @@ assert.equal(timers.size, 0, 'refresh leaves no polling or deadline timer behind
 assert.equal(sources.length, 0, 'manual refresh does not replay startup alerts');
 
 assert(monitors.some(monitor => !monitor.cancelled && monitor.path === '/config'));
-assert.deepEqual(instance._button.menu.actions.map(action => action.text), ['Mute all alerts', 'Settings…']);
+assert.deepEqual(instance._button.menu.actions.map(action => action.text), ['Settings…']);
 instance._button.menu.actions.find(action => action.text === 'Settings…').callback();
 assert.equal(preferencesOpened, 1, 'Settings opens the native preferences window');
 assert(!instance._troubleshooting.menu.actions.some(action => /hook/i.test(action.text)), 'setup help belongs in preferences');
@@ -771,9 +771,8 @@ assert.equal(instance._preferences.mute_all, true);
 assert.equal(notificationsBeforeMute, 1);
 assert.equal(sources.reduce((total, source) => total + source.notifications.length, 0), 0, 'mute still removes the superseded completion notice');
 assert(![...timers.values()].some(timer => timer.delay === 1000), 'mute cancels queued sound');
-const muteChange = instance._toggleMute();
+settings.set_boolean('mute-all', false);
 await settle();
-await muteChange;
 runTimers(100);
 await settle();
 assert.equal(settings.get_boolean('mute-all'), false);

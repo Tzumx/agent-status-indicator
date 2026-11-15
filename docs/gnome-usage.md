@@ -54,7 +54,7 @@ Under **Alerts**, expand an event category to enable its desktop notification an
 
 **Integration** controls optional usage collection and provides brief, expandable **Setup instructions** for lifecycle hooks, Codex trust and the Claude Code status-line adapter. These instructions work offline and do not change agent configuration.
 
-Settings use the native GSettings schema `org.gnome.shell.extensions.agent-status-indicator`. Each choice has its own key, so menu mute and preferences changes do not overwrite unrelated choices. Existing JSON preferences remain read-only fallbacks until an individual setting is explicitly changed in Settings. Resetting a native key restores its legacy fallback, or the built-in default.
+Settings use the native GSettings schema `org.gnome.shell.extensions.agent-status-indicator`. Each choice has its own key, so changing one preference does not overwrite unrelated choices. Existing JSON preferences remain read-only fallbacks until an individual setting is explicitly changed in Settings. Resetting a native key restores its legacy fallback, or the built-in default.
 
 The panel icon uses gray for idle, green for working, amber for permission or decision requests, blue for a confirmed finished response, and red for an agent error or unreadable state. Session rows pair colored icons with theme-colored status text. Quota information uses normal text contrast rather than disabled-control styling.
 
@@ -68,7 +68,7 @@ The writer stores the latest 256 meaningful alert transitions in the same atomic
 
 Notices leave GNOME's notification history when they become obsolete: permission/decision notices clear when that session resumes, errors clear when it recovers, and completion notices clear when its next turn starts. A valid update marking the session ended, reset or explicitly removed also clears its notice. Other sessions and applications remain untouched. Duplicate or delayed events do not dismiss a newer request. Cleanup follows lifecycle state, with no age-based expiry, and still works while alerts are muted. A history-counter reset or a missing/corrupt cache does not establish resolution; notices remain until valid state supplies evidence. Queued sounds are cancelled if their transition resolves before playback.
 
-Use **Mute all alerts** for persistent global mute, and **Settings… → Alerts** for category preferences. Older installations may also supply fallback values in:
+Use **Settings… → Alerts → Mute all alerts** for persistent global mute. The same page holds category preferences. Older installations may also supply fallback values in:
 
 ```text
 $XDG_CONFIG_HOME/agent-status-indicator/gnome.json
