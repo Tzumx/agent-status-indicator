@@ -3,7 +3,7 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
-import {AGENT_LABELS, SOUND_NAMES, safeText, shortId, currentAlerts, alertHistory, quotaWindows, quotaLabel} from './state.js';
+import {AGENT_LABELS, SOUND_NAMES, safeText, shortId, currentAlerts, alertHistory, quotaWindows, quotaLabel, permissionAlertsMuted} from './state.js';
 
 const MESSAGES = {
     completion: 'Finished responding', permission: 'Permission required',
@@ -49,6 +49,8 @@ export class Alerts {
     }
 
     dispatch(events, config, state = null) {
+        const muted = event => event?.kind === 'permission'
+            && permissionAlertsMuted(config, event.agent, event.session);
         const current = state ? currentAlerts(state) : null;
         const generation = alertHistory(state)?.generation;
         if (state && !current)
@@ -68,16 +70,19 @@ export class Alerts {
         }
         if (current) {
             for (const [key, notice] of this._notices) {
-                if (!this._isCurrent(notice, current.get(key), generation))
+                if (muted(notice.event) || !this._isCurrent(notice, current.get(key), generation))
                     notice.notification.destroy(MessageTray.NotificationDestroyedReason.EXPIRED);
             }
-            if (this._pendingSound && this._pendingSound.kind !== 'quota-reset' && !this._isCurrent(this._pendingSound,
-                current.get(JSON.stringify([this._pendingSound.event.agent, this._pendingSound.event.session])), generation))
+            if (this._pendingSound && this._pendingSound.kind !== 'quota-reset'
+                && (muted(this._pendingSound.event) || !this._isCurrent(this._pendingSound,
+                    current.get(JSON.stringify([this._pendingSound.event.agent, this._pendingSound.event.session])), generation)))
                 this.cancelSound();
         }
         if (config.mute_all)
             return;
         for (const event of events) {
+            if (muted(event))
+                continue;
             const key = JSON.stringify([event.agent, event.session]);
             const turn = current?.get(key)?.turn;
             if (current && !this._isCurrent({event, generation, turn}, current.get(key), generation))

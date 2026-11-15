@@ -11,7 +11,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {ensureActorVisibleInScrollView} from 'resource:///org/gnome/shell/misc/animationUtils.js';
 import {Spinner} from 'resource:///org/gnome/shell/ui/animation.js';
-import {summarize, COLORS, sessionRows, STATUS_LABELS, AGENT_LABELS, preferences, AlertCursor, sessionSummary, sessionDetail, SUMMARY_LABELS, STATUS_ICONS, settingsPreferences, quotaWindows, quotaLabel, quotaResetTime, currentAlerts, reportedTime, refreshFeedback} from './state.js';
+import {summarize, COLORS, sessionRows, STATUS_LABELS, AGENT_LABELS, preferences, AlertCursor, sessionSummary, sessionDetail, SUMMARY_LABELS, STATUS_ICONS, settingsPreferences, quotaWindows, quotaLabel, quotaResetTime, currentAlerts, reportedTime, refreshFeedback, permissionAlertsMuted, retainedPermissionMutes} from './state.js';
 import {Alerts, QuotaResetTimer} from './alerts.js';
 import * as LoginManager from 'resource:///org/gnome/shell/misc/loginManager.js';
 import {readJson, refreshUsage, exportSoundPreview} from './io.js';
@@ -47,6 +47,8 @@ export default class AgentStatusExtension extends Extension {
         this._preferences = settingsPreferences(this._settings);
         this._settingsChangedId = this._settings.connect('changed', (_settings, key) => {
             this._preferences = settingsPreferences(this._settings, this._legacyPreferences);
+            if (key === 'muted-permission-sessions')
+                this._alerts.dispatch([], this._preferences, this._lastState);
             if (key === 'mute-all' || key.startsWith('sound-') || key.startsWith('notify-'))
                 this._alerts.cancelSound();
             this._render();
@@ -370,6 +372,15 @@ export default class AgentStatusExtension extends Extension {
                     this._lastState = candidate;
                     this._missing = false;
                     this._stateError = '';
+                    const muted = this._preferences.muted_permission_sessions;
+                    const retained = retainedPermissionMutes(candidate, muted);
+                    try {
+                        if (retained.length !== muted.length
+                            && !this._settings.set_strv('muted-permission-sessions', retained))
+                            throw new Error('Cannot clear ended-session alert preferences.');
+                    } catch (error) {
+                        this._reportError(error.message);
+                    }
                     const {events, warning} = this._cursor.read(candidate);
                     this._alertWarning = warning;
                     this._alerts.dispatch(events, this._preferences, candidate);
@@ -414,19 +425,31 @@ export default class AgentStatusExtension extends Extension {
         if (this._tooltipId)
             GLib.source_remove(this._tooltipId);
         this._tooltipId = 0;
+        this._tooltipButton = null;
         if (this._refreshTooltip)
             this._refreshTooltip.visible = false;
     }
 
-    _syncRefreshTooltip() {
-        this._hideRefreshTooltip();
-        if (!this._cancellable || this._usageRefreshing || !this._button.menu.isOpen
-            || !(this._refreshButton.hover || this._refreshButton.has_key_focus()))
+    _syncRefreshTooltip(button = this._refreshButton, text = 'Refresh local data') {
+        if (!(button.hover || button.has_key_focus())) {
+            if (this._tooltipButton === button)
+                this._hideRefreshTooltip();
             return;
+        }
+        this._hideRefreshTooltip();
+        if (!this._cancellable || !this._button.menu.isOpen
+            || button === this._refreshButton && this._usageRefreshing)
+            return;
+        this._tooltipButton = button;
+        this._refreshTooltip.set_text(text);
         this._tooltipId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
             this._tooltipId = 0;
-            const [x, y] = this._refreshButton.get_transformed_position();
-            const [width, height] = this._refreshButton.get_transformed_size();
+            if (button.mapped === false) {
+                this._hideRefreshTooltip();
+                return GLib.SOURCE_REMOVE;
+            }
+            const [x, y] = button.get_transformed_position();
+            const [width, height] = button.get_transformed_size();
             const [, tooltipWidth] = this._refreshTooltip.get_preferred_width(-1);
             const [, tooltipHeight] = this._refreshTooltip.get_preferred_height(tooltipWidth);
             const area = Main.layoutManager.getWorkAreaForMonitor(Main.layoutManager.findIndexForActor(this._button));
@@ -437,6 +460,34 @@ export default class AgentStatusExtension extends Extension {
             this._refreshTooltip.visible = true;
             return GLib.SOURCE_REMOVE;
         });
+    }
+
+    _showFeedback(message) {
+        this._clearRefreshFeedback();
+        this._refreshMessage = message;
+        this._feedbackId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 4000, () => {
+            this._feedbackId = 0;
+            this._refreshMessage = '';
+            this._render();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _toggleSessionPermissionAlerts(key) {
+        try {
+            const muted = new Set(this._settings.get_strv('muted-permission-sessions'));
+            const unmuting = muted.delete(key);
+            if (!unmuting)
+                muted.add(key);
+            if (!this._settings.set_strv('muted-permission-sessions', [...muted]))
+                throw new Error('Could not save the session alert preference.');
+            this._showFeedback(unmuting ? 'Permission alerts restored for this session.'
+                : 'Permission alerts muted for this session, including manual requests.');
+        } catch {
+            this._showFeedback('Could not save the session alert preference.');
+        }
+        this._hideRefreshTooltip();
+        this._render();
     }
 
     async _refreshLocal() {
@@ -466,13 +517,7 @@ export default class AgentStatusExtension extends Extension {
                 await this._refresh();
                 if (cancellable === this._cancellable && !cancellable.is_cancelled()) {
                     this._usageRefreshing = false;
-                    this._refreshMessage = message;
-                    this._feedbackId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 4000, () => {
-                        this._feedbackId = 0;
-                        this._refreshMessage = '';
-                        this._render();
-                        return GLib.SOURCE_REMOVE;
-                    });
+                    this._showFeedback(message);
                     this._refreshSpinner.stop();
                     this._render();
                 }
@@ -688,6 +733,26 @@ export default class AgentStatusExtension extends Extension {
                     detail.clutter_text.ellipsize = Pango.EllipsizeMode.MIDDLE;
                     secondary.add_child(identity);
                     secondary.add_child(detail);
+                    const permissionIcon = new St.Icon({icon_size: 16});
+                    const permissionMute = new St.Button({
+                        child: permissionIcon, style_class: 'button agent-status-session-alerts',
+                        can_focus: true, track_hover: true, toggle_mode: true,
+                    });
+                    permissionMute.visible = row.agent === 'codex';
+                    permissionMute.connect('clicked', () => this._toggleSessionPermissionAlerts(key));
+                    for (const signal of ['notify::hover', 'key-focus-in', 'key-focus-out'])
+                        permissionMute.connect(signal, () => {
+                            if (signal === 'key-focus-in')
+                                ensureActorVisibleInScrollView(this._sessions.menu.actor, item);
+                            this._syncRefreshTooltip(permissionMute, permissionMute.checked
+                                ? 'Restore Permission Alerts for This Session'
+                                : 'Mute Permission Alerts (Including Manual Requests)');
+                        });
+                    permissionMute.connect('destroy', () => {
+                        if (this._tooltipButton === permissionMute)
+                            this._hideRefreshTooltip();
+                    });
+                    secondary.add_child(permissionMute);
                     labels.add_child(title);
                     labels.add_child(secondary);
                     const context = this._usageWidget();
@@ -706,7 +771,7 @@ export default class AgentStatusExtension extends Extension {
                         this._detail.label.set_text('Reset command copied. Review and run it in a terminal.');
                         this._detail.visible = true;
                     });
-                    widget = {item, label, status, statusIcon, identity, detail, reset, context};
+                    widget = {item, label, status, statusIcon, identity, detail, reset, context, permissionMute, permissionIcon};
                     this._rowWidgets.set(key, widget);
                     group.addMenuItem(item);
                 }
@@ -722,6 +787,12 @@ export default class AgentStatusExtension extends Extension {
                 widget.status.set_text(STATUS_LABELS[row.state]);
                 widget.statusIcon.icon_name = STATUS_ICONS[row.state];
                 widget.statusIcon.set_style(`color: ${COLORS[row.state === 'decision' ? 'approval' : row.state]};`);
+                const muted = permissionAlertsMuted(this._preferences, row.agent, row.session);
+                widget.permissionMute.checked = muted;
+                widget.permissionIcon.set_style(muted ? `color: ${COLORS.approval};` : '');
+                widget.permissionIcon.icon_name = muted ? 'notifications-disabled-symbolic' : 'preferences-system-notifications-symbolic';
+                widget.permissionMute.set_accessible_name(
+                    `${muted ? 'Restore' : 'Mute'} permission alerts for ${row.project} [${row.short}]`);
                 widget.identity.set_text('#' + row.short);
                 widget.detail.set_text(detail);
                 widget.reset.set_accessible_name(`Copy reset command for ${row.project} [${row.short}]`);

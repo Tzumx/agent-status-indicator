@@ -1,6 +1,10 @@
 <!-- SPDX-License-Identifier: MIT -->
 <schemalist>
   <schema id="org.gnome.shell.extensions.agent-status-indicator" path="/org/gnome/shell/extensions/agent-status-indicator/">
+    <key name="muted-permission-sessions" type="as">
+      <default>[]</default>
+      <summary>Codex sessions with permission notifications and sounds muted</summary>
+    </key>
     <key name="mute-all" type="b">
       <default>false</default>
       <summary>Mute all alerts</summary>

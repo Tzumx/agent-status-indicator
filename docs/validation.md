@@ -167,6 +167,14 @@ Screenshots covered all preferences pages, light/dark appearance, expanded offli
 
 Quota reset labels use reported deadlines and the existing render/expiry paths without new polling. Long ASCII/CJK names, scale factors 1 and 2, keyboard scrolling, session lifecycle, alert deduplication and refresh behavior remained covered. The isolated environments preserved the host Shell process, enabled extensions and agent configuration; the GNOME 50 guest had no network routes. Physical audio/input, screen-reader operation and the remaining desktop release checks above are still required.
 
+### Per-session permission alerts (2026-11-15)
+
+The verified archive has SHA-256 `263fa19906f1d82cfdd0972916be7adcb4a0da00ae5b29c74a141ce80051a8ad`. It passed 252 native GNOME 46 checks and 246 on Ubuntu 26.04 / GNOME 50.1, including fresh installation, forced upgrade and removal. All ten installed asset hashes matched the archive and source. Both environments passed all 83 Python tests; the JavaScript harness, native GIO, six-entry-point compilation, shell syntax and archive validation also passed.
+
+Synthetic hooks verified that the session bell suppresses only the selected Codex session’s permission notifications, while other Codex sessions, Claude Code, completion and error notifications remain active. Choices survived extension reloads, confirmed exit cleared only the matching choice, existing permission notices were removed and restoring alerts did not replay requests. JavaScript regressions also cover permission-only sound cancellation, decision alerts and failed preference writes. Injected cleanup-write failures preserved valid native session status and other sessions’ completion alerts; JavaScript tests cover both refused and throwing writes. Native checks verified keyboard help, the click target, visible bell after feedback and the absence of a duplicate global mute row. Screenshots were inspected on both versions. Global mute remains in Settings → Alerts.
+
+The host Shell process/start time, enabled extensions and hook files remained unchanged, and the GNOME 50 guest had no network routes. The package was not installed into the main desktop. This control also silences genuine manual permission requests; it does not distinguish reviewers or change session status. Physical input/audio and the remaining desktop release checks above still apply.
+
 ## Hook measurements
 
 A Linux-only benchmark compares temporary copies of the working tree with a local Git revision. It never fetches, checks out files, modifies agent configuration, or invokes a model:

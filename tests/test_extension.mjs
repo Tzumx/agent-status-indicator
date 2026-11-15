@@ -55,6 +55,8 @@ const settings = {
     get_user_value: key => settingsValues.has(key) ? {} : null,
     get_boolean: key => settingsValues.get(key),
     get_string: key => settingsValues.get(key),
+    get_strv: key => settingsValues.get(key) ?? [],
+    set_strv(key, value) { return this.set_boolean(key, value); },
     set_boolean(key, value) {
         settingsValues.set(key, value);
         for (const callback of settingsSignals.values()) callback(this, key);
@@ -1269,5 +1271,85 @@ assert(refreshChildren.at(-1).killed, 'disable terminates only its owned helper'
 assert.equal(imports['resource:///org/gnome/shell/ui/main.js'].uiGroup.children.length, 0, 'disable destroys tooltip actors');
 assert.equal(timers.size, 0);
 refreshWait = false;
+
+const mutedKey = JSON.stringify(['codex', 'quiet']);
+const sessionConfig = {...preferences(), muted_permission_sessions: [mutedKey]};
+const {permissionAlertsMuted, retainedPermissionMutes} = model.namespace;
+assert(permissionAlertsMuted(sessionConfig, 'codex', 'quiet'));
+assert(!permissionAlertsMuted(sessionConfig, 'codex', 'other'));
+assert(!permissionAlertsMuted({...sessionConfig, muted_permission_sessions: [JSON.stringify(['claude', 'quiet'])]}, 'claude', 'quiet'));
+for (const kind of ['permission', 'completion', 'error', 'decision']) {
+    const scoped = new alertsModule.namespace.Alerts(message => { throw Error(message); });
+    const notice = event(1, kind, 'quiet');
+    scoped.dispatch([notice], sessionConfig, log(1, [notice]));
+    assert.equal(scoped._notices.size, kind === 'permission' ? 0 : 1, `${kind} keeps its independent session policy`);
+    assert.equal(scoped._pendingSound === null, kind === 'permission', `${kind} sound follows the same scope`);
+    scoped.destroy();
+}
+const scopeAlerts = new alertsModule.namespace.Alerts(message => { throw Error(message); });
+const requestA = event(1, 'permission', 'quiet');
+const requestB = event(2, 'permission', 'other');
+const requestC = {...event(3, 'permission', 'quiet'), agent: 'claude'};
+const scopeState = log(3, [requestA, requestB, requestC]);
+scopeAlerts.dispatch([requestA, requestB, requestC], sessionConfig, scopeState);
+assert(!scopeAlerts._notices.has(mutedKey));
+assert(scopeAlerts._notices.has(JSON.stringify(['codex', 'other'])));
+assert(scopeAlerts._notices.has(JSON.stringify(['claude', 'quiet'])));
+scopeAlerts.destroy();
+const cancelMuted = new alertsModule.namespace.Alerts(message => { throw Error(message); });
+cancelMuted.dispatch([requestA], preferences(), log(1, [requestA]));
+const visibleRequest = cancelMuted._notices.get(mutedKey).notification;
+cancelMuted.dispatch([], sessionConfig, log(1, [requestA]));
+assert(visibleRequest.destroyed, 'muting removes only the session’s existing permission notice');
+assert.equal(cancelMuted._pendingSound, null, 'muting cancels queued permission playback');
+cancelMuted.dispatch([], preferences(), log(1, [requestA]));
+assert.equal(cancelMuted._notices.size, 0, 'restoring permission alerts does not replay old notices');
+cancelMuted.destroy();
+const pruning = {sessions: {codex: {quiet: {state: 'working'}, closed: {state: 'idle', event: 'SessionEnd'}}}};
+assert.equal(JSON.stringify(retainedPermissionMutes(pruning, [mutedKey, JSON.stringify(['codex', 'closed']), JSON.stringify(['codex', 'gone']), 'bad'])), JSON.stringify([mutedKey]));
+assert.equal(retainedPermissionMutes({}, [mutedKey])[0], mutedKey, 'an unavailable session table cannot revoke the choice');
+instance.enable();
+await settle();
+instance._lastState = {sessions: {codex: {quiet: {state: 'working', project: 'same'}, other: {state: 'working', project: 'same'}}, claude: {quiet: {state: 'working'}}}};
+instance._render();
+const quietRow = instance._rowWidgets.get(mutedKey);
+const otherRow = instance._rowWidgets.get(JSON.stringify(['codex', 'other']));
+assert(quietRow.permissionMute.visible && !quietRow.permissionMute.checked);
+assert(!instance._rowWidgets.get(JSON.stringify(['claude', 'quiet'])).permissionMute.visible);
+quietRow.permissionMute.click();
+assert(quietRow.permissionMute.checked && !otherRow.permissionMute.checked, 'same-project session choices stay independent');
+assert.match(quietRow.permissionIcon.icon_name, /disabled/);
+assert.match(quietRow.permissionIcon.style, /d29922/);
+assert.match(instance._refreshMessage, /including manual requests/);
+assert.equal(settings.get_strv('muted-permission-sessions')[0], mutedKey);
+instance._render();
+assert(quietRow.permissionMute.checked, 'ordinary renders retain the session choice');
+quietRow.permissionMute.click();
+assert(!quietRow.permissionMute.checked);
+assert.equal(settings.get_strv('muted-permission-sessions').length, 0);
+const saveSessionMutes = settings.set_strv;
+for (const fail of [() => false, () => { throw Error('write unavailable'); }]) {
+    settings.set_strv = fail;
+    quietRow.permissionMute.click();
+    assert(!quietRow.permissionMute.checked, 'failed preference writes preserve the current bell state');
+    assert.match(instance._refreshMessage, /Could not save/);
+}
+settings.set_strv = saveSessionMutes;
+settings.reset('muted-permission-sessions');
+settings.set_boolean('mute-all', false);
+settings.set_boolean('notify-completion', true);
+for (const fail of [() => false, () => { throw Error('preference backend unavailable'); }]) {
+    await updateState(log(0, [], 'cleanup-test'));
+    settings.set_strv('muted-permission-sessions', [mutedKey]);
+    settings.set_strv = fail;
+    await updateState(log(1, [event(1, 'completion', 'other')], 'cleanup-test'));
+    assert.equal(instance._stateError, '', 'optional mute cleanup cannot mark valid state unreadable');
+    assert(instance._alerts._notices.has(JSON.stringify(['codex', 'other'])),
+        'optional cleanup cannot drop another session completion');
+    settings.set_strv = saveSessionMutes;
+    settings.reset('muted-permission-sessions');
+}
+instance.disable();
+assert.equal(timers.size, 0);
 
 console.log('GNOME monitoring, bounded reads, sessions, alert history, sounds, preferences and reload lifecycle passed');

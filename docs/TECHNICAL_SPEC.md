@@ -112,6 +112,7 @@ Default priority for overall display: `error` > `permission/decision required` >
 - Preserve unresolved notices from other sessions and applications. Age alone must never expire a session notice.
 - Consume historical transitions that are already superseded without raising a stale notice or sound. Cancel queued sounds if their transition is resolved before playback; delayed old events must not remove a newer notice.
 - Notifications must be configurable by event category, with a way to mute all alerts in Settings → Alerts. Keep the global mute control there rather than duplicating it in the main session menu.
+- Each Codex session offers a compact permission-alert toggle beside its timestamp. It suppresses only that session’s permission notifications and sounds, including genuine manual requests. Completion, error, decision and quota-reset alerts keep their existing policy. State and lifecycle evidence are unchanged. A slashed amber bell marks suppression, with hover/keyboard help and a brief confirmation. Choices persist by session identity across extension reloads; confirmed exit or removal clears them. Restoring alerts must not replay earlier requests.
 - Missing/invalid internal notification history must use plain diagnostic wording under Troubleshooting while preserving session display and suppressing uncertain alerts. Complete normal-display fixtures must include valid history metadata.
 - If the desktop's notification service is unavailable, state tracking and the panel must keep working.
 

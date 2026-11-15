@@ -82,6 +82,7 @@ instance._refresh = async () => {
                 set_boolean(_key, value) { muted = value; return true; },
                 get_user_value(key) { return key === 'mute-all' && muted !== null ? {} : null; },
                 get_boolean() { return muted; },
+                get_strv() { return []; },
             };
             instance._render = () => {};
             instance._alerts = {cancelSound() {}, destroy() {}};

@@ -58,6 +58,10 @@ Settings use the native GSettings schema `org.gnome.shell.extensions.agent-statu
 
 The panel icon uses gray for idle, green for working, amber for permission or decision requests, blue for a confirmed finished response, and red for an agent error or unreadable state. Session rows pair colored icons with theme-colored status text. Quota information uses normal text contrast rather than disabled-control styling.
 
+Each Codex session has a small bell beside its timestamp. Click it to mute **permission notifications and sounds for that session only**; an amber slashed bell shows the muted state. Click again to restore them. Hover or keyboard focus explains the action, and a brief confirmation appears after a change. Other sessions, Claude Code, completion, error, decision and quota-reset alerts keep their existing settings.
+
+Codex can emit `PermissionRequest` before automatic review, so this control is useful for sessions using auto-review. It also silences genuine manual approval requests in that session; it does not detect which reviewer handled them or change the agent’s permissions or reported status. The choice survives extension reloads and is removed after a confirmed session exit or removal. Restoring alerts does not replay old requests.
+
 ## Notifications and sounds
 
 The extension delivers completion, permission, decision, and error notices through GNOME. Titles contain the agent, project basename, and abbreviated session ID. Bodies use fixed category messages, without conversation text, tool input, or full project paths.

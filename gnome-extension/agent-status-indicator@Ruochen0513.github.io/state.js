@@ -179,6 +179,26 @@ export const SOUND_NAMES = {
     decision: 'dialog-question', error: 'dialog-error', 'quota-reset': 'complete',
 };
 
+export function permissionAlertsMuted(config, agent, session) {
+    return agent === 'codex'
+        && (config.muted_permission_sessions ?? []).includes(JSON.stringify([agent, session]));
+}
+
+export function retainedPermissionMutes(state, keys) {
+    if (!state.sessions)
+        return keys;
+    return keys.filter(key => {
+        try {
+            const [agent, session] = JSON.parse(key);
+            const record = agent === 'codex' && typeof session === 'string'
+                && Object.hasOwn(state.sessions.codex ?? {}, session) && state.sessions.codex[session];
+            return record && displayState(record) !== 'closed';
+        } catch {
+            return false;
+        }
+    });
+}
+
 export function preferences(value = {}) {
     const isObject = item => item !== null && typeof item === 'object' && !Array.isArray(item);
     if (!isObject(value))
@@ -192,7 +212,7 @@ export function preferences(value = {}) {
     if (Object.hasOwn(value, 'panel_icon')
         && (typeof value.panel_icon !== 'string' || !Object.hasOwn(PANEL_ICONS, value.panel_icon)))
         throw new Error('panel_icon must be circle or robot');
-    const result = {panel_icon: value.panel_icon ?? 'circle', mute_all: value.mute_all === true, notifications: {}, sounds: {}, sound_files: {}};
+    const result = {muted_permission_sessions: [], panel_icon: value.panel_icon ?? 'circle', mute_all: value.mute_all === true, notifications: {}, sounds: {}, sound_files: {}};
     for (const [name, [, fallback]] of Object.entries(DISPLAY_SETTINGS)) {
         if (Object.hasOwn(value, name) && typeof value[name] !== 'boolean')
             throw new Error(`${name} must be a boolean`);
@@ -231,7 +251,9 @@ export function settingsPreferences(settings, legacy = {}) {
                 value[group][kind] = group === 'sound_files' ? settings.get_string(key) : settings.get_boolean(key);
         }
     }
-    return preferences(value);
+    const result = preferences(value);
+    result.muted_permission_sessions = settings.get_strv('muted-permission-sessions');
+    return result;
 }
 
 export class AlertCursor {

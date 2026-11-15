@@ -71,7 +71,8 @@
   font-size: 0.85em;
 }
 
-.agent-status-refresh {
+.agent-status-refresh,
+.agent-status-session-alerts {
   padding: 6px;
   min-width: 16px;
   min-height: 16px;
