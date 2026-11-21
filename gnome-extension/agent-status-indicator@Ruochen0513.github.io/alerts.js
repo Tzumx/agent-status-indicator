@@ -87,44 +87,48 @@ export class Alerts {
             const turn = current?.get(key)?.turn;
             if (current && !this._isCurrent({event, generation, turn}, current.get(key), generation))
                 continue;
-            if (config.notifications[event.kind]) {
-                let notification;
-                try {
-                    let source = this._sources.get(key);
-                    if (!source) {
-                        if (this._sources.size >= 256)
-                            this._sources.values().next().value.destroy();
-                        source = new MessageTray.Source({
-                            title: AGENT_LABELS[event.agent], iconName: 'dialog-information-symbolic',
-                        });
-                        source.connect('destroy', () => this._sources.delete(key));
-                        this._sources.set(key, source);
-                        Main.messageTray.add(source);
-                    }
-                    const project = safeText(event.project).split(/[\\/]/).at(-1) || 'Session';
-                    const previous = this._notices.get(key);
-                    notification = new MessageTray.Notification({
-                        source,
-                        title: `${AGENT_LABELS[event.agent]} · ${project} [${shortId(event.session)}]`,
-                        body: MESSAGES[event.kind], sound: null, isTransient: false,
-                        urgency: event.kind === 'completion'
-                            ? MessageTray.Urgency.NORMAL : MessageTray.Urgency.HIGH,
-                    });
-                    notification.connect('destroy', () => {
-                        if (this._notices.get(key)?.notification === notification)
-                            this._notices.delete(key);
-                    });
-                    this._notices.set(key, {notification, event, generation, turn});
-                    source.addNotification(notification);
-                    previous?.notification.destroy(MessageTray.NotificationDestroyedReason.REPLACED);
-                } catch (error) {
-                    this._notices.delete(key);
-                    this._sources.get(key)?.destroy();
-                    this._reportError(`Cannot show notification: ${error.message}`);
-                }
-            }
+            if (config.notifications[event.kind])
+                this._showNotification(event, generation, turn);
             if (config.sounds[event.kind])
                 this._queueSound(event, config.sound_files[event.kind], generation, turn);
+        }
+    }
+
+    _showNotification(event, generation, turn) {
+        const key = JSON.stringify([event.agent, event.session]);
+        let notification;
+        try {
+            let source = this._sources.get(key);
+            if (!source) {
+                if (this._sources.size >= 256)
+                    this._sources.values().next().value.destroy();
+                source = new MessageTray.Source({
+                    title: AGENT_LABELS[event.agent], iconName: 'dialog-information-symbolic',
+                });
+                source.connect('destroy', () => this._sources.delete(key));
+                this._sources.set(key, source);
+                Main.messageTray.add(source);
+            }
+            const project = safeText(event.project).split(/[\\/]/).at(-1) || 'Session';
+            const previous = this._notices.get(key);
+            notification = new MessageTray.Notification({
+                source,
+                title: `${AGENT_LABELS[event.agent]} · ${project} [${shortId(event.session)}]`,
+                body: MESSAGES[event.kind], sound: null, isTransient: false,
+                urgency: event.kind === 'completion'
+                    ? MessageTray.Urgency.NORMAL : MessageTray.Urgency.HIGH,
+            });
+            notification.connect('destroy', () => {
+                if (this._notices.get(key)?.notification === notification)
+                    this._notices.delete(key);
+            });
+            this._notices.set(key, {notification, event, generation, turn});
+            source.addNotification(notification);
+            previous?.notification.destroy(MessageTray.NotificationDestroyedReason.REPLACED);
+        } catch (error) {
+            this._notices.delete(key);
+            this._sources.get(key)?.destroy();
+            this._reportError(`Cannot show notification: ${error.message}`);
         }
     }
 
