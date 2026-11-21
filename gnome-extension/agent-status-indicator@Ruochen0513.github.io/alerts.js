@@ -17,6 +17,7 @@ export class Alerts {
         this._sources = new Map();
         this._notices = new Map();
         this._quotaNotices = new Map();
+        this._pendingPermissions = new Map();
         this._soundId = 0;
         this._pendingSound = null;
         this._previewCancellable = null;
@@ -53,6 +54,11 @@ export class Alerts {
             && permissionAlertsMuted(config, event.agent, event.session);
         const current = state ? currentAlerts(state) : null;
         const generation = alertHistory(state)?.generation;
+        for (const [key, pending] of this._pendingPermissions) {
+            if (config.mute_all || !config.notifications.permission || muted(pending.event)
+                || (current && !this._isCurrent(pending, current.get(key), generation)))
+                this._cancelPermission(key);
+        }
         if (state && !current)
             return;
         if (state) {
@@ -87,11 +93,42 @@ export class Alerts {
             const turn = current?.get(key)?.turn;
             if (current && !this._isCurrent({event, generation, turn}, current.get(key), generation))
                 continue;
-            if (config.notifications[event.kind])
-                this._showNotification(event, generation, turn);
+            if (event.kind !== 'permission')
+                this._cancelPermission(key);
+            if (config.notifications[event.kind]) {
+                if (event.kind === 'permission')
+                    this._queuePermission(event, generation, turn);
+                else
+                    this._showNotification(event, generation, turn);
+            }
             if (config.sounds[event.kind])
                 this._queueSound(event, config.sound_files[event.kind], generation, turn);
         }
+    }
+
+    _queuePermission(event, generation, turn) {
+        const key = JSON.stringify([event.agent, event.session]);
+        const previous = this._pendingPermissions.get(key);
+        if (previous && previous.event.sequence === event.sequence
+            && previous.generation === generation && previous.turn === turn)
+            return;
+        this._cancelPermission(key);
+        if (this._pendingPermissions.size >= 256)
+            this._cancelPermission(this._pendingPermissions.keys().next().value);
+        // A quick automatic approval can resume work before a banner is useful.
+        const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+            this._pendingPermissions.delete(key);
+            this._showNotification(event, generation, turn);
+            return GLib.SOURCE_REMOVE;
+        });
+        this._pendingPermissions.set(key, {id, event, generation, turn});
+    }
+
+    _cancelPermission(key) {
+        const pending = this._pendingPermissions.get(key);
+        if (pending)
+            GLib.source_remove(pending.id);
+        this._pendingPermissions.delete(key);
     }
 
     _showNotification(event, generation, turn) {
@@ -203,6 +240,8 @@ export class Alerts {
     }
 
     destroy() {
+        for (const key of this._pendingPermissions.keys())
+            this._cancelPermission(key);
         this.cancelSound();
         this.cancelPreview();
         for (const source of [...this._sources.values()])

@@ -47,10 +47,10 @@ export default class AgentStatusExtension extends Extension {
         this._preferences = settingsPreferences(this._settings);
         this._settingsChangedId = this._settings.connect('changed', (_settings, key) => {
             this._preferences = settingsPreferences(this._settings, this._legacyPreferences);
-            if (key === 'muted-permission-sessions')
-                this._alerts.dispatch([], this._preferences, this._lastState);
             if (key === 'mute-all' || key.startsWith('sound-') || key.startsWith('notify-'))
                 this._alerts.cancelSound();
+            if (key === 'muted-permission-sessions' || key === 'mute-all' || key === 'notify-permission')
+                this._alerts.dispatch([], this._preferences, this._lastState);
             this._render();
         });
         this._showResetControls = false;
@@ -359,6 +359,7 @@ export default class AgentStatusExtension extends Extension {
                 if (cancellable !== this._cancellable || cancellable.is_cancelled())
                     return;
                 this._alerts.cancelSound();
+                this._alerts.dispatch([], this._preferences, this._lastState);
             }
             if (this._stateDirty) {
                 this._stateDirty = false;

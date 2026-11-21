@@ -911,6 +911,7 @@ let live = {alerts: {generation: 'lifecycle', sequence: 2, events: [permission, 
     claude: {same: {state: 'error', turn_id: 'one', updated_at: 1}},
 }};
 lifecycle.dispatch([permission, failure], liveConfig, live);
+runTimers(500);
 const firstPermission = lifecycle._notices.get(JSON.stringify(['codex', 'same'])).notification;
 const firstError = lifecycle._notices.get(JSON.stringify(['claude', 'same'])).notification;
 lifecycle.dispatch([], liveConfig, {...live, alerts: {generation: {}, events: []}});
@@ -952,6 +953,7 @@ live.alerts.sequence = 4;
 live.alerts.events.push(nextPermission);
 live.sessions.codex.same = {state: 'approval', turn_id: 'two'};
 lifecycle.dispatch([nextPermission], liveConfig, live);
+runTimers(500);
 const currentPermission = lifecycle._notices.get(JSON.stringify(['codex', 'same'])).notification;
 lifecycle.dispatch([permission, completion], liveConfig, live);
 assert(!currentPermission.destroyed, 'late old events cannot clear a newer permission notice');
@@ -1019,6 +1021,7 @@ const closeEvents = [event(1, 'completion', 'ending'), event(2, 'permission', 'w
 const closeNoticeState = log(2, closeEvents);
 const closeConfig = preferences({sounds: {completion: false, permission: false}});
 closeNotices.dispatch(closeEvents, closeConfig, closeNoticeState);
+runTimers(500);
 const endingNotice = closeNotices._notices.get(JSON.stringify(['codex', 'ending'])).notification;
 const waitingNotice = closeNotices._notices.get(JSON.stringify(['codex', 'waiting'])).notification;
 closeNoticeState.sessions.codex.ending.event = 'SessionEnd';
@@ -1292,12 +1295,14 @@ const requestB = event(2, 'permission', 'other');
 const requestC = {...event(3, 'permission', 'quiet'), agent: 'claude'};
 const scopeState = log(3, [requestA, requestB, requestC]);
 scopeAlerts.dispatch([requestA, requestB, requestC], sessionConfig, scopeState);
+runTimers(500);
 assert(!scopeAlerts._notices.has(mutedKey));
 assert(scopeAlerts._notices.has(JSON.stringify(['codex', 'other'])));
 assert(scopeAlerts._notices.has(JSON.stringify(['claude', 'quiet'])));
 scopeAlerts.destroy();
 const cancelMuted = new alertsModule.namespace.Alerts(message => { throw Error(message); });
 cancelMuted.dispatch([requestA], preferences(), log(1, [requestA]));
+runTimers(500);
 const visibleRequest = cancelMuted._notices.get(mutedKey).notification;
 cancelMuted.dispatch([], sessionConfig, log(1, [requestA]));
 assert(visibleRequest.destroyed, 'muting removes only the session’s existing permission notice');
@@ -1351,5 +1356,139 @@ for (const fail of [() => false, () => { throw Error('preference backend unavail
 }
 instance.disable();
 assert.equal(timers.size, 0);
+
+// Permission banners wait briefly for an authoritative continuation, per session.
+for (const agent of ['codex', 'claude']) {
+    const deferred = new alertsModule.namespace.Alerts(message => assert.fail(message));
+    const request = {...event(1, 'permission', 'brief'), agent};
+    const pending = log(1, [request]);
+    const beforeSources = sources.length;
+    const beforeSounds = sounds.length;
+    deferred.dispatch([request], preferences(), pending);
+    const key = JSON.stringify([agent, 'brief']);
+    assert.equal(deferred._notices.size, 0, 'a permission request creates no immediate banner');
+    assert.equal(sources.length, beforeSources, 'the grace period creates no notification source');
+    const deadline = deferred._pendingPermissions.get(key).id;
+    deferred.dispatch([], preferences(), pending);
+    deferred.dispatch([request], preferences(), pending);
+    assert.equal(deferred._pendingPermissions.get(key).id, deadline, 'duplicates cannot postpone the deadline');
+    pending.sessions[agent].brief.state = 'working';
+    deferred.dispatch([], preferences(), pending);
+    runTimers(500);
+    runTimers(1000);
+    assert.equal(sources.length, beforeSources, 'quick continuation prevents creation, rather than dismissing a banner');
+    assert.equal(sounds.length, beforeSounds, 'quick continuation cancels the queued sound');
+    assert.equal(deferred._pendingPermissions.size, 0);
+    deferred.destroy();
+    assert.equal(timers.size, 0);
+}
+
+const waiting = new alertsModule.namespace.Alerts(message => assert.fail(message));
+const waitingEvents = [event(1, 'permission', 'same'),
+    {...event(2, 'permission', 'same'), agent: 'claude'}, event(3, 'permission', 'other')];
+const waitingState = log(3, waitingEvents);
+waiting.dispatch(waitingEvents, preferences(), waitingState);
+assert.equal(waiting._pendingPermissions.size, 3, 'agent and session identity keep deadlines independent');
+waitingState.sessions.codex.other.state = 'working';
+waiting.dispatch([], preferences(), waitingState);
+runTimers(500);
+assert.equal(waiting._notices.size, 2, 'genuine requests appear after the grace period');
+assert(waiting._notices.has(JSON.stringify(['codex', 'same'])));
+assert(waiting._notices.has(JSON.stringify(['claude', 'same'])));
+assert.equal(waiting._pendingPermissions.size, 0);
+waiting.destroy();
+assert.equal(timers.size, 0);
+
+for (const change of ['mute-all', 'category', 'session', 'end', 'reset', 'remove', 'disable']) {
+    const deferred = new alertsModule.namespace.Alerts(message => assert.fail(message));
+    const request = event(1, 'permission', 'pending');
+    const pending = log(1, [request]);
+    const config = preferences();
+    deferred.dispatch([request], config, pending);
+    const beforeSources = sources.length;
+    if (change === 'mute-all') config.mute_all = true;
+    if (change === 'category') config.notifications.permission = false;
+    if (change === 'session') config.muted_permission_sessions = [JSON.stringify(['codex', 'pending'])];
+    if (change === 'end' || change === 'reset')
+        pending.sessions.codex.pending = {state: 'idle', event: change === 'end' ? 'SessionEnd' : 'Reset'};
+    if (change === 'remove') delete pending.sessions.codex.pending;
+    if (change === 'disable') deferred.destroy();
+    else deferred.dispatch([], config, pending);
+    runTimers(500);
+    assert.equal(sources.length, beforeSources, `${change} cancels the pending banner`);
+    assert.equal(deferred._pendingPermissions.size, 0);
+    deferred.dispatch([], preferences(), pending);
+    runTimers(500);
+    assert.equal(sources.length, beforeSources, `${change} does not replay a cancelled banner`);
+    deferred.destroy();
+    assert.equal(timers.size, 0);
+}
+
+const replacement = new alertsModule.namespace.Alerts(message => assert.fail(message));
+const oldRequest = event(1, 'permission', 'renewed');
+replacement.dispatch([oldRequest], preferences(), log(1, [oldRequest]));
+const oldDeadline = replacement._pendingPermissions.values().next().value.id;
+const newRequest = event(2, 'permission', 'renewed');
+const renewedState = log(2, [oldRequest, newRequest]);
+replacement.dispatch([newRequest], preferences(), renewedState);
+const newDeadline = replacement._pendingPermissions.values().next().value.id;
+assert(!timers.has(oldDeadline), 'a newer request cancels the older deadline');
+replacement.dispatch([oldRequest], preferences(), renewedState);
+assert.equal(replacement._pendingPermissions.values().next().value.id, newDeadline, 'delayed old events cannot replace a newer request');
+replacement.dispatch([], preferences(), {sessions: {codex: []}});
+runTimers(500);
+assert.equal(replacement._notices.values().next().value.event.sequence, 2, 'malformed state cannot resolve the last valid request');
+replacement.destroy();
+assert.equal(timers.size, 0);
+
+const delayedFailure = new alertsModule.namespace.Alerts(message => loggedErrors.push(message));
+const failureRequest = event(1, 'permission', 'backend-failure');
+delayedFailure.dispatch([failureRequest], preferences(), log(1, [failureRequest]));
+notificationFailure = true;
+const errorsBeforeGrace = loggedErrors.length;
+runTimers(500);
+notificationFailure = false;
+assert.equal(loggedErrors.length, errorsBeforeGrace + 1, 'delayed notification failure is contained and reported');
+assert.equal(delayedFailure._pendingPermissions.size, 0);
+delayedFailure.destroy();
+assert.equal(timers.size, 0);
+
+// Pending banners follow native settings and legacy-file updates immediately.
+for (const change of ['mute-all', 'notify-permission', 'muted-permission-sessions', 'legacy']) {
+    files.set(configPath, '{}');
+    files.set(statePath, JSON.stringify(log(0, [], 'permission-grace')));
+    instance.enable();
+    await settle();
+    await updateState(log(1, [event(1, 'permission', 'grace')], 'permission-grace'));
+    assert.equal(instance._alerts._pendingPermissions.size, 1);
+    assert.match(instance._dot.style, /#d29922/, 'the permission status remains immediate');
+    const beforeSources = sources.length;
+    if (change === 'muted-permission-sessions')
+        settings.set_strv(change, [JSON.stringify(['codex', 'grace'])]);
+    else if (change !== 'legacy') settings.set_boolean(change, change === 'mute-all');
+    else {
+        files.set(configPath, JSON.stringify({notifications: {permission: false}}));
+        emit(configPath);
+        runTimers(100);
+        await settle();
+    }
+    runTimers(500);
+    assert.equal(sources.length, beforeSources, `${change} prevents the pending native banner`);
+    assert.equal(instance._alerts._pendingPermissions.size, 0);
+    if (change !== 'legacy') settings.reset(change);
+    runTimers(500);
+    assert.equal(sources.length, beforeSources, 'restoring preferences does not replay a cancelled banner');
+    instance.disable();
+    assert.equal(timers.size, 0);
+}
+
+files.set(configPath, '{}');
+files.set(statePath, JSON.stringify(log(0, [], 'disable-grace')));
+instance.enable();
+await settle();
+await updateState(log(1, [event(1, 'permission', 'grace')], 'disable-grace'));
+assert.equal(instance._alerts._pendingPermissions.size, 1);
+instance.disable();
+assert.equal(timers.size, 0, 'disabling the extension clears pending permission and sound timers');
 
 console.log('GNOME monitoring, bounded reads, sessions, alert history, sounds, preferences and reload lifecycle passed');
